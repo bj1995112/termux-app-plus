@@ -11,7 +11,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 
 public class UbuntuAppManager {
@@ -23,7 +22,7 @@ public class UbuntuAppManager {
         public final String id;
         public final String displayName;
         public final String command;
-        public final String distroName; // null 表示 Termux 本地
+        public final String distroName;
 
         public AppItem(String id, String displayName, String command, String distroName) {
             this.id = id;
@@ -33,38 +32,32 @@ public class UbuntuAppManager {
         }
     }
 
-    // 核心知名 AI 编程软件与命令行 AI 智能体库
+    // 核心知名 AI 编程软件（必须精确全等，绝无模糊子串误伤）
     private static final AppItem[] KNOWN_AI_APPS = new AppItem[]{
-        new AppItem("codex", "🤖 Codex", "codex", null),
-        new AppItem("pi", "⚡ Pi", "pi", null),
-        new AppItem("opencode", "💻 OpenCode", "opencode", null),
-        new AppItem("claude", "🧠 Claude", "claude", null),
-        new AppItem("agy", "🚀 AGY", "agy", null),
-        new AppItem("aider", "🤝 Aider", "aider", null),
-        new AppItem("copilot", "✈️ Copilot", "copilot", null),
-        new AppItem("gh-copilot", "✈️ Copilot", "gh copilot", null),
-        new AppItem("cursor", "🎯 Cursor", "cursor", null),
-        new AppItem("gemini", "♊ Gemini", "gemini", null),
-        new AppItem("chatgpt", "💬 ChatGPT", "chatgpt", null),
-        new AppItem("sgpt", "🐚 SGPT", "sgpt", null),
-        new AppItem("interpreter", "🗣️ Interpreter", "interpreter", null),
-        new AppItem("open-interpreter", "🗣️ Interpreter", "open-interpreter", null),
-        new AppItem("plandex", "📋 Plandex", "plandex", null),
-        new AppItem("mentat", "🧬 Mentat", "mentat", null),
-        new AppItem("gpt-engineer", "⚙️ GPT-Eng", "gpt-engineer", null),
-        new AppItem("ollama", "🦙 Ollama", "ollama", null),
-        new AppItem("cody", "🔮 Cody", "cody", null),
-        new AppItem("tabby", "🐱 Tabby", "tabby", null),
-        new AppItem("continue", "⏩ Continue", "continue", null),
-        new AppItem("fabric", "🧵 Fabric", "fabric", null),
-        new AppItem("khoj", "🔍 Khoj", "khoj", null),
-        new AppItem("codeman", "📦 CodeMan", "codeman", null)
-    };
-
-    // AI 编程软件特征关键字（用于动态匹配用户自装的 AI 智能体/CLI 工具）
-    private static final String[] AI_KEYWORDS = new String[]{
-        "ai", "gpt", "claude", "agent", "code", "llm", "bot", "chat",
-        "copilot", "gemini", "deepseek", "qwen", "ollama", "pi", "openai"
+        new AppItem("pi", "⚡ Pi", "pi", "ubuntu"),
+        new AppItem("codex", "🤖 Codex", "codex", "ubuntu"),
+        new AppItem("opencode", "💻 OpenCode", "opencode", "ubuntu"),
+        new AppItem("claude", "🧠 Claude", "claude", "ubuntu"),
+        new AppItem("agy", "🚀 AGY", "agy", "ubuntu"),
+        new AppItem("aider", "🤝 Aider", "aider", "ubuntu"),
+        new AppItem("copilot", "✈️ Copilot", "copilot", "ubuntu"),
+        new AppItem("gh-copilot", "✈️ Copilot", "gh copilot", "ubuntu"),
+        new AppItem("cursor", "🎯 Cursor", "cursor", "ubuntu"),
+        new AppItem("gemini", "♊ Gemini", "gemini", "ubuntu"),
+        new AppItem("chatgpt", "💬 ChatGPT", "chatgpt", "ubuntu"),
+        new AppItem("sgpt", "🐚 SGPT", "sgpt", "ubuntu"),
+        new AppItem("interpreter", "🗣️ Interpreter", "interpreter", "ubuntu"),
+        new AppItem("open-interpreter", "🗣️ Interpreter", "open-interpreter", "ubuntu"),
+        new AppItem("plandex", "📋 Plandex", "plandex", "ubuntu"),
+        new AppItem("mentat", "🧬 Mentat", "mentat", "ubuntu"),
+        new AppItem("gpt-engineer", "⚙️ GPT-Eng", "gpt-engineer", "ubuntu"),
+        new AppItem("ollama", "🦙 Ollama", "ollama", "ubuntu"),
+        new AppItem("cody", "🔮 Cody", "cody", "ubuntu"),
+        new AppItem("tabby", "🐱 Tabby", "tabby", "ubuntu"),
+        new AppItem("continue", "⏩ Continue", "continue", "ubuntu"),
+        new AppItem("fabric", "🧵 Fabric", "fabric", "ubuntu"),
+        new AppItem("khoj", "🔍 Khoj", "khoj", "ubuntu"),
+        new AppItem("codeman", "📦 CodeMan", "codeman", "ubuntu")
     };
 
     public static List<File> getInstalledDistroRoots() {
@@ -94,7 +87,7 @@ public class UbuntuAppManager {
         List<AppItem> result = new ArrayList<>();
         Set<String> addedIds = new HashSet<>();
 
-        // 1. 探测 proot-distro 容器
+        // 仅深入扫描 Ubuntu 及所有 proot-distro 容器
         List<File> distroRoots = getInstalledDistroRoots();
         for (File rootfs : distroRoots) {
             String distro = rootfs.getName();
@@ -120,61 +113,27 @@ public class UbuntuAppManager {
                 }
             }
 
-            scanDirectoriesForApps(dirs, distro, result, addedIds);
-        }
+            for (File dir : dirs) {
+                if (!dir.exists() || !dir.isDirectory()) continue;
 
-        // 2. 探测 Termux 本地环境
-        File filesDir = context.getFilesDir();
-        List<File> termuxDirs = new ArrayList<>();
-        termuxDirs.add(new File(filesDir, "usr/bin"));
-        termuxDirs.add(new File(filesDir, "home/.local/bin"));
-        termuxDirs.add(new File(filesDir, "home/.cargo/bin"));
-        scanDirectoriesForApps(termuxDirs, null, result, addedIds);
+                String[] names = dir.list();
+                if (names == null || names.length == 0) continue;
+
+                Set<String> nameSet = new HashSet<>(Arrays.asList(names));
+
+                // 严格 100% 精确全等匹配（Exact Match），绝对杜绝 pip、gzip 等杂质
+                for (AppItem known : KNOWN_AI_APPS) {
+                    if (nameSet.contains(known.id)) {
+                        if (!addedIds.contains(known.id)) {
+                            result.add(new AppItem(known.id, known.displayName, known.command, distro));
+                            addedIds.add(known.id);
+                        }
+                    }
+                }
+            }
+        }
 
         return result;
-    }
-
-    private static void scanDirectoriesForApps(List<File> dirs, String distro, List<AppItem> result, Set<String> addedIds) {
-        for (File dir : dirs) {
-            if (!dir.exists() || !dir.isDirectory()) continue;
-
-            // 使用 list() 获取目录所有直属文件/软链接名，绝不漏掉容器内软链接
-            String[] names = dir.list();
-            if (names == null || names.length == 0) continue;
-
-            Set<String> nameSet = new HashSet<>(Arrays.asList(names));
-
-            // A. 匹配已知 AI 软件
-            for (AppItem known : KNOWN_AI_APPS) {
-                if (nameSet.contains(known.id)) {
-                    if (!addedIds.contains(known.id) && !addedIds.contains(known.command)) {
-                        result.add(new AppItem(known.id, known.displayName, known.command, distro));
-                        addedIds.add(known.id);
-                        addedIds.add(known.command);
-                    }
-                }
-            }
-
-            // B. 动态匹配私有目录下符合 AI 关键词的软件
-            for (String name : names) {
-                if (name.startsWith(".") || addedIds.contains(name)) continue;
-                if (name.endsWith(".pyc") || name.endsWith(".bak") || name.endsWith(".txt") || name.endsWith(".so")) continue;
-
-                String lower = name.toLowerCase(Locale.ROOT);
-                boolean isAi = false;
-                for (String kw : AI_KEYWORDS) {
-                    if (lower.contains(kw)) {
-                        isAi = true;
-                        break;
-                    }
-                }
-
-                if (isAi) {
-                    result.add(new AppItem(name, "🤖 " + name, name, distro));
-                    addedIds.add(name);
-                }
-            }
-        }
     }
 
     public static void launchApp(TermuxActivity activity, AppItem app) {
@@ -185,13 +144,9 @@ public class UbuntuAppManager {
         }
 
         String execCmd;
-        if (app.distroName != null) {
-            execCmd = "proot-distro login " + app.distroName + " -- " + app.command + "\n";
-        } else if (isProotDistroInstalled()) {
-            execCmd = "proot-distro login " + sDefaultDistroName + " -- " + app.command + "\n";
-        } else {
-            execCmd = app.command + "\n";
-        }
+        String distro = app.distroName != null ? app.distroName : sDefaultDistroName;
+        // 穿透拉起 Ubuntu 软件
+        execCmd = "proot-distro login " + distro + " -- " + app.command + "\n";
 
         session.write(execCmd);
         activity.getDrawer().closeDrawers();
