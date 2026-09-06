@@ -397,11 +397,11 @@ public class TermuxMcpManager {
     }
 
     /**
-     * 生成免费 Cloudflare Tunnel 一键映射命令提示
+     * 生成 ngrok 官方极速穿透映射命令
      */
-    public String getCloudflareCommand(Context context) {
+    public String getNgrokCommand(Context context) {
         int port = getPort(context);
-        return "cloudflared tunnel --url http://127.0.0.1:" + port;
+        return "ngrok http " + port;
     }
 
     /**
@@ -409,7 +409,7 @@ public class TermuxMcpManager {
      */
     public String getChatGptOAuthSnippet(Context context, String host) {
         int port = getPort(context);
-        String baseHost = (host != null && !host.isEmpty()) ? host : "https://your-public-domain.trycloudflare.com";
+        String baseHost = (host != null && !host.isEmpty()) ? host : "https://你的公网域名(如ngrok或自建穿透)";
         if (baseHost.endsWith("/")) {
             baseHost = baseHost.substring(0, baseHost.length() - 1);
         }
@@ -422,6 +422,6 @@ public class TermuxMcpManager {
             "5. 令牌 URL (Token URL): " + baseHost + "/oauth/token\n" +
             "6. 作用域 (Scope): execute\n" +
             "7. 令牌交换方式 (Token Exchange Method): POST (支持 PKCE S256 与 Client Secret 凭据)\n\n" +
-            "※ 温馨提示：如果使用 Cloudflare Tunnel / FRP 等内网穿透，请将上述 Authorization URL 和 Token URL 中的前缀修改为您生成的公网 HTTPS 域名。";
+            "※ 温馨提示：如果使用 ngrok / FRP 等公网穿透，请将上述 Authorization URL 和 Token URL 中的前缀替换为您生成的公网 HTTPS 域名（例如 https://xxxx.ngrok-free.dev）。";
     }
 }

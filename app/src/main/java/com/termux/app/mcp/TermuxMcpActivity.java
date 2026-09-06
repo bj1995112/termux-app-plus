@@ -324,21 +324,86 @@ public class TermuxMcpActivity extends AppCompatActivity {
         tvOAuthDesc.setPadding(0, 0, 0, (int) (8 * density));
         oauthLayout.addView(tvOAuthDesc);
 
+        // ── 客户端 ID (Client ID) ──
+        TextView tvClientIdLabel = new TextView(this);
+        tvClientIdLabel.setText("客户端 ID (Client ID)");
+        tvClientIdLabel.setTextSize(14);
+        tvClientIdLabel.setTypeface(null, Typeface.BOLD);
+        tvClientIdLabel.setTextColor(mTextColorPrimary);
+        oauthLayout.addView(tvClientIdLabel);
+
+        TextView tvClientIdHint = new TextView(this);
+        tvClientIdHint.setText("ChatGPT OAuth 填报中的 Client ID（点击下方卡片可直接复制）");
+        tvClientIdHint.setTextSize(12);
+        tvClientIdHint.setTextColor(mTextColorSecondary);
+        oauthLayout.addView(tvClientIdHint);
+
         mTvOAuthClientId = new TextView(this);
         mTvOAuthClientId.setTextSize(13);
-        mTvOAuthClientId.setTextColor(mTextColorPrimary);
+        mTvOAuthClientId.setTypeface(Typeface.MONOSPACE);
+        mTvOAuthClientId.setTextColor(0xFF009688);
+        mTvOAuthClientId.setBackgroundColor(0x15009688);
+        mTvOAuthClientId.setPadding((int) (12 * density), (int) (8 * density), (int) (12 * density), (int) (8 * density));
+        LinearLayout.LayoutParams lpTvClientId = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lpTvClientId.topMargin = (int) (6 * density);
+        lpTvClientId.bottomMargin = (int) (6 * density);
+        mTvOAuthClientId.setLayoutParams(lpTvClientId);
+        mTvOAuthClientId.setOnClickListener(v -> copyClientIdToClipboard());
         oauthLayout.addView(mTvOAuthClientId);
 
-        LinearLayout oauthSecretRow = new LinearLayout(this);
-        oauthSecretRow.setOrientation(LinearLayout.HORIZONTAL);
-        oauthSecretRow.setGravity(Gravity.CENTER_VERTICAL);
-        oauthSecretRow.setPadding(0, (int) (4 * density), 0, (int) (4 * density));
+        LinearLayout clientIdBtnRow = new LinearLayout(this);
+        clientIdBtnRow.setOrientation(LinearLayout.HORIZONTAL);
+        clientIdBtnRow.setGravity(Gravity.END);
+
+        MaterialButton btnCopyClientId = new MaterialButton(this);
+        btnCopyClientId.setText("复制 Client ID");
+        btnCopyClientId.setTextSize(11);
+        btnCopyClientId.setOnClickListener(v -> copyClientIdToClipboard());
+        clientIdBtnRow.addView(btnCopyClientId);
+        oauthLayout.addView(clientIdBtnRow);
+
+        addDivider(oauthLayout, density);
+
+        // ── 客户端密码 (Client Secret) ──
+        TextView tvClientSecretLabel = new TextView(this);
+        tvClientSecretLabel.setText("客户端密码 (Client Secret)");
+        tvClientSecretLabel.setTextSize(14);
+        tvClientSecretLabel.setTypeface(null, Typeface.BOLD);
+        tvClientSecretLabel.setTextColor(mTextColorPrimary);
+        oauthLayout.addView(tvClientSecretLabel);
+
+        TextView tvClientSecretHint = new TextView(this);
+        tvClientSecretHint.setText("ChatGPT OAuth 填报中的 Client Secret（点击下方卡片可直接复制）");
+        tvClientSecretHint.setTextSize(12);
+        tvClientSecretHint.setTextColor(mTextColorSecondary);
+        oauthLayout.addView(tvClientSecretHint);
 
         mTvOAuthClientSecret = new TextView(this);
         mTvOAuthClientSecret.setTextSize(13);
-        mTvOAuthClientSecret.setTextColor(mTextColorPrimary);
-        mTvOAuthClientSecret.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
-        oauthSecretRow.addView(mTvOAuthClientSecret);
+        mTvOAuthClientSecret.setTypeface(Typeface.MONOSPACE);
+        mTvOAuthClientSecret.setTextColor(0xFF009688);
+        mTvOAuthClientSecret.setBackgroundColor(0x15009688);
+        mTvOAuthClientSecret.setPadding((int) (12 * density), (int) (8 * density), (int) (12 * density), (int) (8 * density));
+        LinearLayout.LayoutParams lpTvSecret = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lpTvSecret.topMargin = (int) (6 * density);
+        lpTvSecret.bottomMargin = (int) (6 * density);
+        mTvOAuthClientSecret.setLayoutParams(lpTvSecret);
+        mTvOAuthClientSecret.setOnClickListener(v -> copyClientSecretToClipboard());
+        oauthLayout.addView(mTvOAuthClientSecret);
+
+        LinearLayout secretBtnRow = new LinearLayout(this);
+        secretBtnRow.setOrientation(LinearLayout.HORIZONTAL);
+        secretBtnRow.setGravity(Gravity.END);
+
+        MaterialButton btnCopySecret = new MaterialButton(this);
+        btnCopySecret.setText("复制 Secret (密码)");
+        btnCopySecret.setTextSize(11);
+        btnCopySecret.setOnClickListener(v -> copyClientSecretToClipboard());
+        secretBtnRow.addView(btnCopySecret);
+
+        View spacerSecretBtn = new View(this);
+        spacerSecretBtn.setLayoutParams(new LinearLayout.LayoutParams((int) (8 * density), 1));
+        secretBtnRow.addView(spacerSecretBtn);
 
         MaterialButton btnResetSecret = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
         btnResetSecret.setText("重置 Secret");
@@ -346,10 +411,12 @@ public class TermuxMcpActivity extends AppCompatActivity {
         btnResetSecret.setOnClickListener(v -> {
             TermuxMcpManager.getInstance().resetOAuthClientSecret(this);
             refreshUI();
-            Toast.makeText(this, "已重置 OAuth Client Secret", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "已重置 OAuth Client Secret 密码", Toast.LENGTH_SHORT).show();
         });
-        oauthSecretRow.addView(btnResetSecret);
-        oauthLayout.addView(oauthSecretRow);
+        secretBtnRow.addView(btnResetSecret);
+        oauthLayout.addView(secretBtnRow);
+
+        addDivider(oauthLayout, density);
 
         mTvOAuthUrls = new TextView(this);
         mTvOAuthUrls.setTextSize(12);
@@ -450,15 +517,16 @@ public class TermuxMcpActivity extends AppCompatActivity {
         });
         clientsLayout.addView(btnCopyOpenApi);
 
-        MaterialButton btnCopyCf = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
-        btnCopyCf.setText("复制 Cloudflare 免费公网穿透命令");
-        btnCopyCf.setTextSize(11);
-        btnCopyCf.setOnClickListener(v -> {
-            String cmd = TermuxMcpManager.getInstance().getCloudflareCommand(this);
-            copyToClipboard("Cloudflare Tunnel Command", cmd);
-            Toast.makeText(this, "已复制穿透命令，在 Termux 终端运行即可生成免费公网 HTTPS 链接！", Toast.LENGTH_LONG).show();
+        MaterialButton btnCopyNgrok = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        btnCopyNgrok.setText("复制 ngrok 官方公网穿透命令");
+        btnCopyNgrok.setTextSize(11);
+        btnCopyNgrok.setOnClickListener(v -> {
+            int port = TermuxMcpManager.getInstance().getPort(this);
+            String cmd = "ngrok http " + port;
+            copyToClipboard("ngrok Tunnel Command", cmd);
+            Toast.makeText(this, "已复制：ngrok http " + port + "，在终端运行即可建立公网穿透！", Toast.LENGTH_LONG).show();
         });
-        clientsLayout.addView(btnCopyCf);
+        clientsLayout.addView(btnCopyNgrok);
 
         cardClients.addView(clientsLayout);
         content.addView(cardClients);
@@ -530,8 +598,8 @@ public class TermuxMcpActivity extends AppCompatActivity {
         mTvToken.setText(token.isEmpty() ? "（未设置 · 免密模式）" : token);
         mTvTimeout.setText("当前超时上限：" + timeoutSec + " 秒（超时后自动终止进程）");
 
-        mTvOAuthClientId.setText("Client ID: " + manager.getOAuthClientId(this));
-        mTvOAuthClientSecret.setText("Client Secret: " + manager.getOAuthClientSecret(this));
+        mTvOAuthClientId.setText(manager.getOAuthClientId(this));
+        mTvOAuthClientSecret.setText(manager.getOAuthClientSecret(this));
         mTvOAuthUrls.setText(
             "授权端点: http://" + localIp + ":" + port + "/oauth/authorize\n" +
             "令牌端点: http://" + localIp + ":" + port + "/oauth/token"
@@ -573,6 +641,18 @@ public class TermuxMcpActivity extends AppCompatActivity {
         String token = TermuxMcpManager.getInstance().getToken(this);
         copyToClipboard("Termux MCP Token", token);
         Toast.makeText(this, "已复制安全密钥到剪贴板！", Toast.LENGTH_SHORT).show();
+    }
+
+    private void copyClientIdToClipboard() {
+        String clientId = TermuxMcpManager.getInstance().getOAuthClientId(this);
+        copyToClipboard("OAuth Client ID", clientId);
+        Toast.makeText(this, "已复制 Client ID：" + clientId, Toast.LENGTH_SHORT).show();
+    }
+
+    private void copyClientSecretToClipboard() {
+        String secret = TermuxMcpManager.getInstance().getOAuthClientSecret(this);
+        copyToClipboard("OAuth Client Secret", secret);
+        Toast.makeText(this, "已复制 Client Secret (密码) 到剪贴板！", Toast.LENGTH_SHORT).show();
     }
 
     private void showEditTimeoutDialog() {
