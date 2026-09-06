@@ -132,6 +132,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
      */
     ExtraKeysView mExtraKeysView;
 
+    public static TermuxActivity sInstance;
+
     /**
      * The client for the {@link #mExtraKeysView}.
      */
@@ -218,6 +220,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         super.onCreate(savedInstanceState);
 
         setContentView(R.layout.activity_termux);
+        sInstance = this;
+        com.termux.app.styling.TermuxPromptManager.ensureInstalled(this);
 
         // Load termux shared preferences
         // This will also fail if TermuxConstants.TERMUX_PACKAGE_NAME does not equal applicationId
@@ -359,6 +363,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @Override
     public void onDestroy() {
         super.onDestroy();
+        if (sInstance == this) sInstance = null;
 
         Logger.logDebug(LOG_TAG, "onDestroy");
 
