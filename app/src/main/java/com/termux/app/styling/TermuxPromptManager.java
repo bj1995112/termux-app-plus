@@ -1,7 +1,6 @@
 package com.termux.app.styling;
 
 import android.content.Context;
-import androidx.annotation.NonNull;
 
 import com.termux.terminal.TerminalSession;
 
@@ -19,7 +18,7 @@ import java.util.List;
 /**
  * Termux+ Dynamic Prompt Manager (Prompt Engine 2.0)
  * 采用“配置分离 + 零注入动态钩子 (No PTY Injection)”架构
- * 支持热加载即刻变色、跨环境（Termux 原生 & Ubuntu 容器）双端同步。
+ * 彻底打通 Termux 宿主沙盒与 proot-distro（Ubuntu 等）容器双端，实现多环境 100% 同步热加载。
  */
 public class TermuxPromptManager {
 
@@ -100,127 +99,236 @@ public class TermuxPromptManager {
     }
 
     /**
-     * 获取当前生效的主题 ID
+     * 获取所有配置目标文件（多环境全量穿透：Termux 宿主、proot-distro Ubuntu 及所有已安装容器）
      */
-    public static String getCurrentThemeId(Context context) {
-        return readConfigValue(context, "theme", "starship");
+    private static List<File> getAllTargetConfigFiles(Context context) {
+        List<File> list = new ArrayList<>();
+        File filesDir = context.getFilesDir();
+
+        // 1. Termux 宿主路径
+        File hostTermux = new File(filesDir, "home/.termux");
+        list.add(new File(hostTermux, "prompt.conf"));
+
+        File hostTwui = new File(filesDir, "home/.config/termux-webui");
+        if (hostTwui.exists()) {
+            list.add(new File(hostTwui, "prompt.conf"));
+        }
+
+        // 2. 扫描 proot-distro 所有容器 rootfs
+        File containersDir = new File(filesDir, "usr/var/lib/proot-distro/containers");
+        if (containersDir.exists() && containersDir.isDirectory()) {
+            File[] distros = containersDir.listFiles();
+            if (distros != null) {
+                for (File d : distros) {
+                    if (d.isDirectory()) {
+                        File rootfs = new File(d, "rootfs");
+                        if (rootfs.exists() && rootfs.isDirectory()) {
+                            // 容器 root 用户路径
+                            list.add(new File(rootfs, "root/.termux/prompt.conf"));
+                            list.add(new File(rootfs, "root/.config/termux-webui/prompt.conf"));
+
+                            // 容器普通用户路径（若有）
+                            File guestHome = new File(rootfs, "home");
+                            if (guestHome.exists() && guestHome.isDirectory()) {
+                                File[] users = guestHome.listFiles();
+                                if (users != null) {
+                                    for (File u : users) {
+                                        if (u.isDirectory()) {
+                                            list.add(new File(u, ".termux/prompt.conf"));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. 宿主外层容错（当直接在 chroot/proot 或测试环境下运行时）
+        File fallbackTermux = new File("/root/.termux/prompt.conf");
+        if (!list.contains(fallbackTermux)) list.add(fallbackTermux);
+        File fallbackTwui = new File("/root/.config/termux-webui/prompt.conf");
+        if (!list.contains(fallbackTwui)) list.add(fallbackTwui);
+
+        return list;
     }
 
-    /**
-     * 获取当前生效的色彩 ID
-     */
+    public static String getCurrentThemeId(Context context) {
+        return readConfigValue(context, "theme", "hud");
+    }
+
     public static String getCurrentColorId(Context context) {
         return readConfigValue(context, "color", "cyan");
     }
 
     private static String readConfigValue(Context context, String key, String defaultValue) {
-        File conf = getPrimaryConfigFile(context);
-        if (!conf.exists() || !conf.canRead()) {
-            // 尝试备用路径
-            File backup = new File("/root/.config/termux-webui/prompt.conf");
-            if (backup.exists() && backup.canRead()) {
-                conf = backup;
-            } else {
-                return defaultValue;
-            }
-        }
-
-        try (BufferedReader br = new BufferedReader(new FileReader(conf))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                line = line.trim();
-                if (line.startsWith(key + "=")) {
-                    String val = line.substring(key.length() + 1).trim();
-                    // 去除可能存在的单双引号
-                    if ((val.startsWith("\"") && val.endsWith("\"")) || (val.startsWith("'") && val.endsWith("'"))) {
-                        val = val.substring(1, val.length() - 1);
+        List<File> confFiles = getAllTargetConfigFiles(context);
+        for (File conf : confFiles) {
+            if (conf.exists() && conf.canRead()) {
+                try (BufferedReader br = new BufferedReader(new FileReader(conf))) {
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        line = line.trim();
+                        if (line.startsWith(key + "=")) {
+                            String val = line.substring(key.length() + 1).trim();
+                            if ((val.startsWith("\"") && val.endsWith("\"")) || (val.startsWith("'") && val.endsWith("'"))) {
+                                val = val.substring(1, val.length() - 1);
+                            }
+                            if (!val.isEmpty()) return val;
+                        }
                     }
-                    return val;
+                } catch (Exception ignored) {
                 }
             }
-        } catch (Exception ignored) {
         }
         return defaultValue;
     }
 
-    private static File getPrimaryConfigFile(Context context) {
-        File home = new File(context.getFilesDir(), "home");
-        File termuxDir = new File(home, ".termux");
-        if (!termuxDir.exists()) termuxDir.mkdirs();
-        return new File(termuxDir, "prompt.conf");
-    }
-
     /**
-     * 安装与同步核心 shell 动态引擎脚本到系统
+     * 全量安装并覆盖所有环境下的 prompt 引擎脚本及挂钩
      */
     public static void ensureInstalled(Context context) {
         try {
-            File home = new File(context.getFilesDir(), "home");
-            File termuxDir = new File(home, ".termux");
-            if (!termuxDir.exists()) termuxDir.mkdirs();
+            File filesDir = context.getFilesDir();
 
-            File targetScript = new File(termuxDir, "prompt.sh");
-            // 写入 assets 中的 termux_prompt.sh
-            try (InputStream in = context.getAssets().open("styling/prompt/termux_prompt.sh");
-                 OutputStream out = new FileOutputStream(targetScript)) {
+            // 1. 部署到 Termux 宿主 .termux/prompt.sh
+            File hostHome = new File(filesDir, "home");
+            File hostTermux = new File(hostHome, ".termux");
+            if (!hostTermux.exists()) hostTermux.mkdirs();
+            File hostScript = new File(hostTermux, "prompt.sh");
+            copyAssetToFile(context, "styling/prompt/termux_prompt.sh", hostScript);
+
+            // 部署到宿主 /usr/etc/profile.d/termux_prompt.sh
+            File hostProfileD = new File(filesDir, "usr/etc/profile.d");
+            if (hostProfileD.exists() && hostProfileD.isDirectory()) {
+                File hostProfScript = new File(hostProfileD, "termux_prompt.sh");
+                copyAssetToFile(context, "styling/prompt/termux_prompt.sh", hostProfScript);
+            }
+
+            // 安全挂钩宿主 ~/.bashrc（必须位于 exec proot-distro 之前！）
+            File hostBashrc = new File(hostHome, ".bashrc");
+            injectHookToHostBashrc(hostBashrc, "[ -f ~/.termux/prompt.sh ] && . ~/.termux/prompt.sh");
+
+            // 2. 扫描并深度穿透 proot-distro 容器（如 Ubuntu）
+            File containersDir = new File(filesDir, "usr/var/lib/proot-distro/containers");
+            if (containersDir.exists() && containersDir.isDirectory()) {
+                File[] distros = containersDir.listFiles();
+                if (distros != null) {
+                    for (File d : distros) {
+                        if (d.isDirectory()) {
+                            File rootfs = new File(d, "rootfs");
+                            if (rootfs.exists() && rootfs.isDirectory()) {
+                                // 关键：覆盖容器内部 /etc/profile.d/termux_prompt.sh！彻底消除旧版硬编码残留！
+                                File cProfileD = new File(rootfs, "etc/profile.d");
+                                if (cProfileD.exists() && cProfileD.isDirectory()) {
+                                    File cProfScript = new File(cProfileD, "termux_prompt.sh");
+                                    copyAssetToFile(context, "styling/prompt/termux_prompt.sh", cProfScript);
+                                }
+
+                                // 容器 root 家目录
+                                File cRootTermux = new File(rootfs, "root/.termux");
+                                if (!cRootTermux.exists()) cRootTermux.mkdirs();
+                                File cRootScript = new File(cRootTermux, "prompt.sh");
+                                copyAssetToFile(context, "styling/prompt/termux_prompt.sh", cRootScript);
+
+                                // 确保容器 /root/.bashrc 拥有加载钩子
+                                File cRootBashrc = new File(rootfs, "root/.bashrc");
+                                if (cRootBashrc.exists()) {
+                                    appendHookIfMissing(cRootBashrc, "[ -r \"$HOME/.termux/prompt.sh\" ] && . \"$HOME/.termux/prompt.sh\"");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. 容错部署（当前环境本身在容器内）
+            File localProfileD = new File("/etc/profile.d/termux_prompt.sh");
+            if (localProfileD.getParentFile() != null && localProfileD.getParentFile().exists()) {
+                copyAssetToFile(context, "styling/prompt/termux_prompt.sh", localProfileD);
+            }
+            File localTermux = new File("/root/.termux");
+            if (localTermux.exists()) {
+                copyAssetToFile(context, "styling/prompt/termux_prompt.sh", new File(localTermux, "prompt.sh"));
+            }
+
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static void copyAssetToFile(Context context, String assetPath, File dest) {
+        try {
+            if (dest.getParentFile() != null && !dest.getParentFile().exists()) {
+                dest.getParentFile().mkdirs();
+            }
+            try (InputStream in = context.getAssets().open(assetPath);
+                 OutputStream out = new FileOutputStream(dest)) {
                 byte[] buf = new byte[4096];
                 int len;
                 while ((len = in.read(buf)) > 0) {
                     out.write(buf, 0, len);
                 }
             }
-            targetScript.setReadable(true, false);
-            targetScript.setExecutable(true, false);
-
-            // 同时部署到 /data/data/com.termux/files/usr/etc/profile.d/termux_prompt.sh（如果目录存在）
-            File profileD = new File(context.getFilesDir(), "usr/etc/profile.d");
-            if (profileD.exists() && profileD.canWrite()) {
-                File profScript = new File(profileD, "termux_prompt.sh");
-                try (InputStream in = context.getAssets().open("styling/prompt/termux_prompt.sh");
-                     OutputStream out = new FileOutputStream(profScript)) {
-                    byte[] buf = new byte[4096];
-                    int len;
-                    while ((len = in.read(buf)) > 0) {
-                        out.write(buf, 0, len);
-                    }
-                }
-                profScript.setReadable(true, false);
-                profScript.setExecutable(true, false);
-            }
-
-            // 安全挂钩 ~/.bashrc
-            File bashrc = new File(home, ".bashrc");
-            appendHookIfMissing(bashrc, targetScript.getAbsolutePath());
-
-            // 跨环境支持：若当前检测到 /root/.bashrc，也注入挂钩
-            File rootBashrc = new File("/root/.bashrc");
-            if (rootBashrc.exists() && rootBashrc.canWrite()) {
-                appendHookIfMissing(rootBashrc, targetScript.getAbsolutePath());
-            }
-
+            dest.setReadable(true, false);
+            dest.setExecutable(true, false);
         } catch (Exception ignored) {
         }
     }
 
-    private static void appendHookIfMissing(File rcFile, String scriptPath) {
+    private static void injectHookToHostBashrc(File bashrc, String hookLine) {
         try {
+            if (!bashrc.exists()) return;
+            StringBuilder sb = new StringBuilder();
+            boolean hasHook = false;
+            try (BufferedReader br = new BufferedReader(new FileReader(bashrc))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    if (line.contains("termux/prompt.sh")) {
+                        hasHook = true;
+                    }
+                    sb.append(line).append("\n");
+                }
+            }
+
+            if (!hasHook) {
+                String content = sb.toString();
+                String execMarker = "exec proot-distro login";
+                if (content.contains(execMarker)) {
+                    int idx = content.indexOf(execMarker);
+                    int lineStart = content.lastIndexOf("\n", idx);
+                    if (lineStart == -1) lineStart = 0;
+                    String newContent = content.substring(0, lineStart) + "\n\n# Termux+ Dynamic Prompt Engine\n" + hookLine + "\n" + content.substring(lineStart);
+                    try (FileWriter fw = new FileWriter(bashrc, false)) {
+                        fw.write(newContent);
+                    }
+                } else {
+                    try (FileWriter fw = new FileWriter(bashrc, true)) {
+                        fw.write("\n# Termux+ Dynamic Prompt Engine\n" + hookLine + "\n");
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static void appendHookIfMissing(File rcFile, String hook) {
+        try {
+            if (!rcFile.exists()) return;
             boolean alreadyHooked = false;
-            if (rcFile.exists()) {
-                try (BufferedReader br = new BufferedReader(new FileReader(rcFile))) {
-                    String line;
-                    while ((line = br.readLine()) != null) {
-                        if (line.contains("termux_prompt.sh") || line.contains(".termux/prompt.sh")) {
-                            alreadyHooked = true;
-                            break;
-                        }
+            try (BufferedReader br = new BufferedReader(new FileReader(rcFile))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    if (line.contains("termux_prompt.sh") || line.contains(".termux/prompt.sh")) {
+                        alreadyHooked = true;
+                        break;
                     }
                 }
             }
 
             if (!alreadyHooked) {
                 try (FileWriter fw = new FileWriter(rcFile, true)) {
-                    fw.write("\n# Termux+ Dynamic Prompt Engine\n");
-                    fw.write("[ -r \"" + scriptPath + "\" ] && . \"" + scriptPath + "\"\n");
+                    fw.write("\n# Termux+ Dynamic Prompt Engine\n" + hook + "\n");
                 }
             }
         } catch (Exception ignored) {
@@ -228,7 +336,7 @@ public class TermuxPromptManager {
     }
 
     /**
-     * 保存并动态应用样式
+     * 保存并在全环境同步应用样式
      */
     public static boolean applyPromptStyle(Context context, TerminalSession session, String themeId, String colorId) {
         try {
@@ -236,24 +344,22 @@ public class TermuxPromptManager {
 
             String content = "theme=" + themeId + "\ncolor=" + colorId + "\n";
 
-            // 1. 写入 Termux 宿主主配置文件
-            File mainConf = getPrimaryConfigFile(context);
-            try (FileWriter fw = new FileWriter(mainConf, false)) {
-                fw.write(content);
-            }
-
-            // 2. 双环境支持：如果存在 /root/.config/termux-webui/，同步写入兼容
-            File twuiDir = new File("/root/.config/termux-webui");
-            if (twuiDir.exists() && twuiDir.canWrite()) {
-                File twuiConf = new File(twuiDir, "prompt.conf");
-                try (FileWriter fw = new FileWriter(twuiConf, false)) {
-                    fw.write(content);
+            List<File> targetFiles = getAllTargetConfigFiles(context);
+            for (File conf : targetFiles) {
+                try {
+                    if (conf.getParentFile() != null && !conf.getParentFile().exists()) {
+                        conf.getParentFile().mkdirs();
+                    }
+                    try (FileWriter fw = new FileWriter(conf, false)) {
+                        fw.write(content);
+                    }
+                    conf.setReadable(true, false);
+                } catch (Exception ignored) {
                 }
             }
 
-            // 3. 动态触发前台终端重绘（零命令注入，仅发送不可见 Readline 刷新热键 \e[99~）
+            // 动态触发前台终端重绘（发送绑定的无害转义键 \e[99~，触发 readline 原地重绘）
             if (session != null && session.isRunning()) {
-                // 发送绑定的安全转义字符，通知 bash/readline 毫秒级原地重绘
                 session.write("\033[99~");
             }
 
