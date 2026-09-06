@@ -133,16 +133,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     ExtraKeysView mExtraKeysView;
 
     /**
-     * Whether AI programming apps section in drawer is expanded.
-     */
-    private boolean mIsUbuntuAppsExpanded = true;
-
-    /**
-     * Global static instance of TermuxActivity for style and prompt hot-reloading.
-     */
-    public static TermuxActivity sInstance;
-
-    /**
      * The client for the {@link #mExtraKeysView}.
      */
     TermuxTerminalExtraKeys mTermuxTerminalExtraKeys;
@@ -228,7 +218,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         super.onCreate(savedInstanceState);
 
         setContentView(R.layout.activity_termux);
-        sInstance = this;
 
         // Load termux shared preferences
         // This will also fail if TermuxConstants.TERMUX_PACKAGE_NAME does not equal applicationId
@@ -262,7 +251,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         setSettingsButtonView();
         setStyleButtonView();
-        setupUbuntuAppsView();
         applyDrawerAdaptiveTheme();
 
         setNewSessionButtonView();
@@ -342,7 +330,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
 
         applyDrawerAdaptiveTheme();
-        setupUbuntuAppsView();
 
         mIsOnResumeAfterOnCreate = false;
     }
@@ -372,7 +359,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @Override
     public void onDestroy() {
         super.onDestroy();
-        if (sInstance == this) sInstance = null;
 
         Logger.logDebug(LOG_TAG, "onDestroy");
 
@@ -605,118 +591,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
     }
 
-    private void setupUbuntuAppsView() {
-        new Thread(() -> {
-            List<com.termux.app.ubuntu.UbuntuAppManager.AppItem> apps = com.termux.app.ubuntu.UbuntuAppManager.getInstalledApps(this);
-            runOnUiThread(() -> {
-                View section = findViewById(R.id.ubuntu_apps_section);
-                View header = findViewById(R.id.ubuntu_apps_header);
-                TextView title = findViewById(R.id.ubuntu_apps_title);
-                TextView expandIcon = findViewById(R.id.ubuntu_apps_expand_icon);
-                LinearLayout container = findViewById(R.id.ubuntu_apps_container);
-                if (section == null || container == null) return;
-
-                float density = getResources().getDisplayMetrics().density;
-
-                section.setVisibility(View.VISIBLE);
-                if (title != null) {
-                    title.setText("🤖 AI 编程软件 (" + apps.size() + ")");
-                }
-
-                if (header != null) {
-                    header.setOnClickListener(v -> {
-                        mIsUbuntuAppsExpanded = !mIsUbuntuAppsExpanded;
-                        container.setVisibility(mIsUbuntuAppsExpanded ? View.VISIBLE : View.GONE);
-                        if (expandIcon != null) {
-                            expandIcon.setText(mIsUbuntuAppsExpanded ? "收起 ▴" : "展开 ▾");
-                        }
-                    });
-                }
-
-                container.setVisibility(mIsUbuntuAppsExpanded ? View.VISIBLE : View.GONE);
-                if (expandIcon != null) {
-                    expandIcon.setText(mIsUbuntuAppsExpanded ? "收起 ▴" : "展开 ▾");
-                }
-
-                container.removeAllViews();
-
-                if (apps.isEmpty()) {
-                    TextView tip = new TextView(this);
-                    tip.setText("💡 容器/本地未发现 AI 工具 (点击扫描)");
-                    tip.setTextSize(11);
-                    tip.setAlpha(0.65f);
-                    tip.setPadding((int) (8 * density), (int) (6 * density), (int) (8 * density), (int) (6 * density));
-                    tip.setOnClickListener(v -> {
-                        Toast.makeText(this, "正在重新探测已安装软件...", Toast.LENGTH_SHORT).show();
-                        setupUbuntuAppsView();
-                    });
-                    container.addView(tip);
-                    return;
-                }
-
-                int padH = (int) (8 * density);
-                int padV = (int) (4 * density);
-                int rowMarginBottom = (int) (6 * density);
-                int gap = (int) (4 * density);
-
-                LinearLayout currentRow = null;
-                for (int i = 0; i < apps.size(); i++) {
-                    com.termux.app.ubuntu.UbuntuAppManager.AppItem app = apps.get(i);
-                    if (i % 2 == 0) {
-                        currentRow = new LinearLayout(this);
-                        currentRow.setOrientation(LinearLayout.HORIZONTAL);
-                        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
-                            LinearLayout.LayoutParams.MATCH_PARENT,
-                            LinearLayout.LayoutParams.WRAP_CONTENT
-                        );
-                        rlp.bottomMargin = rowMarginBottom;
-                        currentRow.setLayoutParams(rlp);
-                        container.addView(currentRow);
-                    }
-
-                    com.google.android.material.button.MaterialButton btn = new com.google.android.material.button.MaterialButton(
-                        this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle
-                    );
-                    btn.setText(app.displayName);
-                    btn.setTextSize(12);
-                    btn.setAllCaps(false);
-                    btn.setPadding(padH, padV, padH, padV);
-                    btn.setCornerRadius((int) (8 * density));
-                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                        0,
-                        (int) (38 * density),
-                        1.0f
-                    );
-                    if (i % 2 == 0) {
-                        lp.rightMargin = gap;
-                    } else {
-                        lp.leftMargin = gap;
-                    }
-                    btn.setLayoutParams(lp);
-
-                    btn.setOnClickListener(v -> {
-                        com.termux.app.ubuntu.UbuntuAppManager.launchApp(TermuxActivity.this, app);
-                    });
-
-                    if (currentRow != null) {
-                        currentRow.addView(btn);
-                    }
-                }
-
-                // 若总数为奇数，填充空白占位保持左右对齐
-                if (apps.size() % 2 != 0 && currentRow != null) {
-                    View spacer = new View(this);
-                    LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(
-                        0, 0, 1.0f
-                    );
-                    spLp.leftMargin = gap;
-                    spacer.setLayoutParams(spLp);
-                    currentRow.addView(spacer);
-                }
-            });
-        }).start();
-    }
-
     private void applyDrawerAdaptiveTheme() {
         View drawer = findViewById(R.id.left_drawer);
         if (drawer == null) return;
@@ -762,16 +636,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             } else {
                 styleBtn.clearColorFilter();
             }
-        }
-
-        TextView appsTitle = findViewById(R.id.ubuntu_apps_title);
-        if (appsTitle != null) {
-            appsTitle.setTextColor(fg);
-        }
-
-        TextView expandIcon = findViewById(R.id.ubuntu_apps_expand_icon);
-        if (expandIcon != null) {
-            expandIcon.setTextColor(fg);
         }
 
         TextView sessionsTitle = findViewById(R.id.sessions_header_title);
