@@ -81,13 +81,53 @@ __termux_prompt_apply() {
             # 现代星际双行：顶部目录与状态，底部输入箭头
             PS1="${C}┌──[${B}\w${R}${C}]${R}\n${C}└──${R} ${STAT_SYM} "
             ;;
+        galaxy)
+            # 星系穿梭 (Galaxy / Warp 风格)
+            PS1="${C}╭─ 🌌 \u in ${B}\w${R}\n${C}╰─❯${R} "
+            ;;
+        gitflow)
+            # Git 开发者徽章
+            PS1="${C}┌──(${B}\W${R}${C}) - [${CG}🌿 main${R}${C}]\n${C}└─ λ${R} "
+            ;;
+        pulse)
+            # 状态码脉冲
+            PS1="${C}╭─[ \t ] ⚡ [${B}\w${R}${C}]\n${C}╰─➤${R} "
+            ;;
+        capsule)
+            # 胶囊双联
+            PS1="${C}┏━ [ ${B}\u@\h${R}${C} ] ━━ ( ${B}\W${R}${C} )\n${C}┗━▶${R} "
+            ;;
         hud)
             # HUD 科幻状态栏（经典受欢迎的 [user@host] ━➤ ）
             PS1="${C}[\u@\h] ━➤ ${R}"
             ;;
+        matrix)
+            # 黑客帝国矩阵
+            PS1="[SYS::${CG}\u@\h${R}${C}] # ${B}\w${R}${C} >> ${R}"
+            ;;
+        mecha)
+            # 生化机甲 HUD
+            PS1="${C}◈ [STATUS:${CG}OK${R}${C}] ━◆ [${B}\w${R}${C}] ━➤ ${R}"
+            ;;
+        blade)
+            # 霓虹切割
+            PS1="${C}◢◤ ${B}TERMUX${R}${C} ◢◤ \w ◢ ${R}"
+            ;;
         arrow)
             # 优雅单行尾翼
             PS1="${C}\w ╰─➤ ${R}"
+            ;;
+        purearrow)
+            # 纯粹单箭头
+            PS1="${B}\W${R} ${C}❯${R} "
+            ;;
+        wave)
+            # 波浪单行
+            PS1="~ ∿ ${C}\w${R} ∿ "
+            ;;
+        lightning)
+            # 闪电极速
+            PS1="⚡ [${C}\u${R}] ${B}\w${R} » "
             ;;
         kali)
             # Kali Linux 经典渗透双行
@@ -113,12 +153,36 @@ __termux_prompt_apply() {
             # Ubuntu 官方经典
             PS1="${CG}\u@\h${R}:${C}\w${R}\$ "
             ;;
+        arch)
+            # Arch Linux 经典
+            PS1="[${C}\u@archlinux${R} ${B}\w${R}]# "
+            ;;
+        debian)
+            # Debian 经典螺旋
+            PS1="🌀 (${CD}debian${R}) ${C}\u@\h:\w\$ ${R}"
+            ;;
+        gentoo)
+            # Gentoo 紫黑极客
+            PS1="[${C}gentoo${R}] ${B}\w${R} % "
+            ;;
+        dos)
+            # 经典 MS-DOS 复古
+            PS1="${C}C:\\\W> ${R}"
+            ;;
         neon)
             # 双行方括号极客
-            PS1="${C}╭─[ ${B}\u@\h${R}${C} ] - [ ${B}\w${R}${C} ]\n╰──➤ ${R}"
+            PS1="${C}╭─[ ${B}\u@\h${R}${C} ] - [ ${B}\w${R}${C} ]\n${C}╰──➤ ${R}"
+            ;;
+        neko)
+            # 软萌猫爪
+            PS1="🐾 (${C}ฅ'ω'ฅ${R}) ${B}\w${R} 🌸 "
+            ;;
+        rpg)
+            # 像素复古 RPG
+            PS1="[LV.99 ${C}HERO${R}] ⚔️ ${B}\W${R} ❯ "
             ;;
         *)
-            PS1="${C}┌──[${B}\w${R}${C}]\n└──${R} ${STAT_SYM} "
+            PS1="${C}┌──[${B}\w${R}${C}]\n${C}└──${R} ${STAT_SYM} "
             ;;
     esac
 

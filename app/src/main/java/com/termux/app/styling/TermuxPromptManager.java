@@ -49,15 +49,42 @@ public class TermuxPromptManager {
     }
 
     public static final List<PromptTheme> THEMES = Arrays.asList(
+        // 现代双行
         new PromptTheme("starship", "星际双行 (Starship 风格)", "现代双行", "┌──[~/workspace]\n└── ❯ "),
-        new PromptTheme("hud", "HUD 科幻状态栏 (经典炫酷)", "科幻极客", "[root@localhost] ━➤ "),
-        new PromptTheme("arrow", "优雅尾翼 (Arrow 单行)", "单行极简", "~/workspace ╰─➤ "),
+        new PromptTheme("galaxy", "星系穿梭 (Galaxy / Warp)", "现代双行", "╭─ 🌌 termux in ~/workspace\n╰─❯ "),
+        new PromptTheme("gitflow", "Git 开发者徽章 (GitFlow)", "现代双行", "┌──(workspace) - [🌿 main]\n└─ λ "),
+        new PromptTheme("pulse", "状态码脉冲 (Pulse Status)", "现代双行", "╭─[ 21:20:00 ] ⚡ [~/workspace]\n╰─➤ "),
+        new PromptTheme("capsule", "胶囊双联 (Capsule Dual)", "现代双行", "┏━ [ root@localhost ] ━━ ( ~/workspace )\n┗━▶ "),
         new PromptTheme("kali", "Kali 渗透 (经典黑客双行)", "现代双行", "┌──(termux㉿android)-[~]\n└─$ "),
+        new PromptTheme("neon", "双行方括号 (Neon 极客)", "现代双行", "╭─[ termux@android ] - [ ~ ]\n╰──➤ "),
+
+        // 科幻极客
+        new PromptTheme("hud", "HUD 科幻状态栏 (经典炫酷)", "科幻极客", "[root@localhost] ━➤ "),
+        new PromptTheme("matrix", "黑客帝国矩阵 (Matrix)", "科幻极客", "[SYS::root@core] # ~/workspace >> "),
+        new PromptTheme("mecha", "生化机甲 (Mecha HUD)", "科幻极客", "◈ [STATUS:OK] ━◆ [~/workspace] ━➤ "),
+        new PromptTheme("blade", "霓虹切割 (Neon Blade)", "科幻极客", "◢◤ TERMUX ◢◤ ~/workspace ◢ "),
         new PromptTheme("powerline", "Powerline 箭头 (极客胶囊)", "科幻极客", "user  ~  ❯ "),
         new PromptTheme("cyber", "赛博朋克 (重型霓虹)", "科幻极客", "━━━[~/workspace]━━➤ "),
+
+        // 单行极简
+        new PromptTheme("arrow", "优雅尾翼 (Arrow 单行)", "单行极简", "~/workspace ╰─➤ "),
+        new PromptTheme("purearrow", "纯粹单箭头 (Pure Arrow)", "单行极简", "workspace ❯ "),
+        new PromptTheme("wave", "波浪单行 (Gentle Wave)", "单行极简", "~ ∿ ~/workspace ∿ "),
+        new PromptTheme("lightning", "闪电极速 (Lightning Bolt)", "单行极简", "⚡ [termux] ~/workspace » "),
         new PromptTheme("minimal", "极简单行 (成功绿/失败红)", "单行极简", "workspace ➜ "),
+
+        // 官方经典
         new PromptTheme("ubuntu", "Ubuntu 官方经典 (原生感)", "官方经典", "root@localhost:~$ "),
-        new PromptTheme("neon", "双行方括号 (Neon 极客)", "现代双行", "╭─[ termux@android ] - [ ~ ]\n╰──➤ "),
+        new PromptTheme("arch", "Arch Linux 经典 (Pacman 感)", "官方经典", "[root@archlinux ~/workspace]# "),
+        new PromptTheme("debian", "Debian 经典螺旋 (Swirl)", "官方经典", "🌀 (debian) root@localhost:~/workspace$ "),
+        new PromptTheme("gentoo", "Gentoo 紫黑极客 (Stage)", "官方经典", "[gentoo] ~/workspace % "),
+        new PromptTheme("dos", "经典 MS-DOS 复古 (CMD)", "官方经典", "C:\\WORKSPACE> "),
+
+        // 趣味个性
+        new PromptTheme("neko", "软萌猫爪 (Neko Paw)", "趣味个性", "🐾 (ฅ'ω'ฅ) ~/workspace 🌸 "),
+        new PromptTheme("rpg", "像素复古 RPG (Hero)", "趣味个性", "[LV.99 HERO] ⚔️ ~/workspace ❯ "),
+
+        // 原生默认
         new PromptTheme("default", "原生默认 (不作任何改写)", "原生默认", "（保持系统初始 PS1，不产生覆盖）")
     );
 

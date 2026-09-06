@@ -35,6 +35,8 @@ public class TermuxStyleActivity extends AppCompatActivity {
     private TextView mCurrentFontText;
     private TextView mCurrentPromptText;
     private TextView mPreviewTerminalText;
+    private View mPreviewTerminalBox;
+    private TextView mPreviewTitle;
 
     private List<TermuxStyleManager.StyleItem> mColorSchemes;
     private List<TermuxStyleManager.StyleItem> mFonts;
@@ -55,6 +57,8 @@ public class TermuxStyleActivity extends AppCompatActivity {
         mCurrentFontText = findViewById(R.id.current_font_text);
         mCurrentPromptText = findViewById(R.id.current_prompt_text);
         mPreviewTerminalText = findViewById(R.id.preview_terminal_text);
+        mPreviewTerminalBox = findViewById(R.id.preview_terminal_box);
+        mPreviewTitle = findViewById(R.id.preview_title);
 
         MaterialCardView cardColorScheme = findViewById(R.id.card_color_scheme);
         MaterialCardView cardFonts = findViewById(R.id.card_fonts);
@@ -83,6 +87,22 @@ public class TermuxStyleActivity extends AppCompatActivity {
     }
 
     private void updateCurrentState() {
+        // 1. 动态联动终端当前配色方案
+        int[] terminalColors = TermuxStyleManager.getTerminalCurrentColors(this);
+        int termBg = terminalColors[0];
+        int termFg = terminalColors[1];
+
+        if (mPreviewTerminalBox != null) {
+            mPreviewTerminalBox.setBackgroundColor(termBg);
+        }
+        if (mPreviewTerminalText != null) {
+            mPreviewTerminalText.setTextColor(termFg);
+        }
+        if (mPreviewTitle != null) {
+            mPreviewTitle.setTextColor(termFg);
+        }
+
+        // 2. 动态联动终端当前字体
         File homeDir = new File(getFilesDir(), "home");
         File termuxDir = new File(homeDir, ".termux");
         File fontFile = new File(termuxDir, "font.ttf");
@@ -90,14 +110,18 @@ public class TermuxStyleActivity extends AppCompatActivity {
         if (fontFile.exists() && fontFile.length() > 0) {
             try {
                 Typeface tf = Typeface.createFromFile(fontFile);
-                if (tf != null) {
+                if (tf != null && mPreviewTerminalText != null) {
                     mPreviewTerminalText.setTypeface(tf);
                 }
             } catch (Exception ignored) {
             }
+        } else {
+            if (mPreviewTerminalText != null) {
+                mPreviewTerminalText.setTypeface(Typeface.MONOSPACE);
+            }
         }
 
-        // 更新命令行样式显示状态
+        // 3. 动态联动命令行样式（Prompt）
         String curThemeId = TermuxPromptManager.getCurrentThemeId(this);
         String curColorId = TermuxPromptManager.getCurrentColorId(this);
         TermuxPromptManager.PromptTheme theme = TermuxPromptManager.getThemeById(curThemeId);
@@ -113,10 +137,10 @@ public class TermuxStyleActivity extends AppCompatActivity {
 
         if (mPreviewTerminalText != null) {
             if ("default".equalsIgnoreCase(curThemeId)) {
-                mPreviewTerminalText.setText("$ echo \"Hello, Termux+\"\nHello, Termux+\n$ ");
+                mPreviewTerminalText.setText("$ cat README.md\n[+] Termux+ 终端增强版就绪\n$ ");
             } else {
                 String promptSim = theme.previewText;
-                mPreviewTerminalText.setText(promptSim + "echo \"Hello, Termux+\"\nHello, Termux+\n" + promptSim);
+                mPreviewTerminalText.setText(promptSim + "cat README.md\n[+] Termux+ 终端增强版就绪\n" + promptSim);
             }
         }
     }
@@ -134,6 +158,7 @@ public class TermuxStyleActivity extends AppCompatActivity {
                 boolean success = TermuxStyleManager.applyColorScheme(this, selected.fileName);
                 if (success) {
                     mCurrentColorText.setText(selected.displayName);
+                    updateCurrentState();
                     Toast.makeText(this, getString(R.string.styling_applied) + ": " + selected.displayName, Toast.LENGTH_SHORT).show();
                 }
             })
@@ -163,42 +188,72 @@ public class TermuxStyleActivity extends AppCompatActivity {
     }
 
     /**
-     * 动态命令行样式（Prompt）图形化选择器
+     * 动态命令行样式（Prompt）一体化图形选择器（色彩 + 样式同屏即选即显）
      */
     private void showPromptStyleDialog() {
         final List<TermuxPromptManager.PromptTheme> allThemes = TermuxPromptManager.THEMES;
         final List<String> categories = TermuxPromptManager.getCategories();
         final List<TermuxPromptManager.PromptTheme> displayList = new ArrayList<>(allThemes);
+        final List<TermuxPromptManager.PromptColor> colors = TermuxPromptManager.COLORS;
 
         float density = getResources().getDisplayMetrics().density;
+
+        // 当前选中的颜色（可被顶部药丸动态切换）
+        String initColorId = TermuxPromptManager.getCurrentColorId(this);
+        final TermuxPromptManager.PromptColor[] currentColorHolder = new TermuxPromptManager.PromptColor[]{
+            TermuxPromptManager.getColorById(initColorId)
+        };
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding((int) (12 * density), (int) (8 * density), (int) (12 * density), (int) (8 * density));
 
-        // 横向滚动分类标签栏
-        HorizontalScrollView hsv = new HorizontalScrollView(this);
-        hsv.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        hsv.setHorizontalScrollBarEnabled(false);
+        // 1. 顶部色卡横向滑动切换栏
+        TextView colorTitle = new TextView(this);
+        colorTitle.setText("🎨 搭配主打色 (点击即时变色)：");
+        colorTitle.setTextSize(12);
+        colorTitle.setTextColor(0xFFB0B0B0);
+        colorTitle.setPadding(0, 0, 0, (int) (4 * density));
+        root.addView(colorTitle);
+
+        HorizontalScrollView hsvColor = new HorizontalScrollView(this);
+        hsvColor.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        hsvColor.setHorizontalScrollBarEnabled(false);
+        LinearLayout colorContainer = new LinearLayout(this);
+        colorContainer.setOrientation(LinearLayout.HORIZONTAL);
+        hsvColor.addView(colorContainer);
+        root.addView(hsvColor);
+
+        // 2. 分类横向滑动切换栏
+        TextView catTitle = new TextView(this);
+        catTitle.setText("⚡ 选择风格 (共 " + allThemes.size() + " 款)：");
+        catTitle.setTextSize(12);
+        catTitle.setTextColor(0xFFB0B0B0);
+        catTitle.setPadding(0, (int) (8 * density), 0, (int) (4 * density));
+        root.addView(catTitle);
+
+        HorizontalScrollView hsvCat = new HorizontalScrollView(this);
+        hsvCat.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        hsvCat.setHorizontalScrollBarEnabled(false);
         LinearLayout catContainer = new LinearLayout(this);
         catContainer.setOrientation(LinearLayout.HORIZONTAL);
-        hsv.addView(catContainer);
-        root.addView(hsv);
+        hsvCat.addView(catContainer);
+        root.addView(hsvCat);
 
-        // 样式列表控件
+        // 3. 样式列表控件
         ListView listView = new ListView(this);
         listView.setDividerHeight(0);
         listView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         LinearLayout.LayoutParams lvLp = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            (int) (420 * density)
+            (int) (380 * density)
         );
         lvLp.topMargin = (int) (8 * density);
         listView.setLayoutParams(lvLp);
         root.addView(listView);
 
         AlertDialog dialog = new AlertDialog.Builder(this)
-            .setTitle("⚡ 命令行样式 (动态加载 · 跨环境)")
+            .setTitle("⚡ 命令行样式工坊 (Prompt Engine)")
             .setView(root)
             .setNegativeButton(R.string.action_cancel, null)
             .create();
@@ -233,7 +288,7 @@ public class TermuxStyleActivity extends AppCompatActivity {
                 if (convertView == null) {
                     itemLayout = new LinearLayout(TermuxStyleActivity.this);
                     itemLayout.setOrientation(LinearLayout.VERTICAL);
-                    itemLayout.setPadding((int) (10 * density), (int) (10 * density), (int) (10 * density), (int) (10 * density));
+                    itemLayout.setPadding((int) (10 * density), (int) (8 * density), (int) (10 * density), (int) (8 * density));
                     itemLayout.setBackgroundResource(android.R.drawable.list_selector_background);
 
                     LinearLayout titleRow = new LinearLayout(TermuxStyleActivity.this);
@@ -249,7 +304,7 @@ public class TermuxStyleActivity extends AppCompatActivity {
 
                     TextView tvCat = new TextView(TermuxStyleActivity.this);
                     tvCat.setTextSize(11);
-                    tvCat.setTextColor(0xFF00E5FF);
+                    tvCat.setTextColor(0xFF81D4FA);
                     tvCat.setPadding((int) (6 * density), (int) (2 * density), (int) (6 * density), (int) (2 * density));
 
                     titleRow.addView(tvName);
@@ -260,14 +315,13 @@ public class TermuxStyleActivity extends AppCompatActivity {
                     TextView previewBox = new TextView(TermuxStyleActivity.this);
                     previewBox.setTextSize(12);
                     previewBox.setTypeface(Typeface.MONOSPACE);
-                    previewBox.setTextColor(0xFF81D4FA);
-                    previewBox.setBackgroundColor(0xFF1E1E1E);
+                    previewBox.setBackgroundColor(0xFF181818);
                     previewBox.setPadding((int) (10 * density), (int) (6 * density), (int) (10 * density), (int) (6 * density));
                     LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT
                     );
-                    pp.topMargin = (int) (6 * density);
+                    pp.topMargin = (int) (4 * density);
                     previewBox.setLayoutParams(pp);
 
                     itemLayout.addView(previewBox);
@@ -286,6 +340,8 @@ public class TermuxStyleActivity extends AppCompatActivity {
                     holder.nameView.setText(item.displayName);
                     holder.catView.setText(item.category);
                     holder.previewView.setText(item.previewText);
+                    // 微缩预览字符颜色随当前色彩选择联动！
+                    holder.previewView.setTextColor(currentColorHolder[0].colorInt);
                 }
 
                 return itemLayout;
@@ -294,7 +350,46 @@ public class TermuxStyleActivity extends AppCompatActivity {
 
         listView.setAdapter(adapter);
 
-        // 分类按钮点击切换
+        // 填充色卡药丸按钮
+        final List<MaterialButton> colorButtons = new ArrayList<>();
+        for (TermuxPromptManager.PromptColor c : colors) {
+            MaterialButton btn = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+            btn.setText(c.displayName);
+            btn.setTextSize(11);
+            btn.setPadding((int) (8 * density), 0, (int) (8 * density), 0);
+            btn.setCornerRadius((int) (16 * density));
+            btn.setTextColor(c.colorInt);
+
+            boolean isCurrent = c.id.equalsIgnoreCase(currentColorHolder[0].id);
+            if (isCurrent) {
+                btn.setStrokeWidth((int) (2 * density));
+                btn.setStrokeColorResource(android.R.color.white);
+            } else {
+                btn.setStrokeWidth((int) (1 * density));
+            }
+
+            LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                (int) (32 * density)
+            );
+            bp.rightMargin = (int) (6 * density);
+            btn.setLayoutParams(bp);
+
+            btn.setOnClickListener(v -> {
+                currentColorHolder[0] = c;
+                for (MaterialButton other : colorButtons) {
+                    other.setStrokeWidth((int) (1 * density));
+                }
+                btn.setStrokeWidth((int) (2 * density));
+                // 实时联动刷新下方列表的所有预览颜色！
+                adapter.notifyDataSetChanged();
+            });
+
+            colorButtons.add(btn);
+            colorContainer.addView(btn);
+        }
+
+        // 填充分类按钮
         for (String cat : categories) {
             MaterialButton btn = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
             btn.setText(cat);
@@ -324,50 +419,15 @@ public class TermuxStyleActivity extends AppCompatActivity {
             catContainer.addView(btn);
         }
 
+        // 单击列表项：直接以当前选中的颜色一步到位应用！
         listView.setOnItemClickListener((parent, view, position, id) -> {
-            TermuxPromptManager.PromptTheme selected = displayList.get(position);
+            TermuxPromptManager.PromptTheme selectedTheme = displayList.get(position);
+            TermuxPromptManager.PromptColor selectedColor = currentColorHolder[0];
             dialog.dismiss();
-
-            if ("default".equalsIgnoreCase(selected.id)) {
-                // 原生默认，直接应用并恢复
-                applyThemeAndColor(selected, TermuxPromptManager.getColorById("cyan"));
-            } else {
-                // 弹出搭配色卡选择器
-                showPromptColorDialog(selected);
-            }
+            applyThemeAndColor(selectedTheme, selectedColor);
         });
 
         dialog.show();
-    }
-
-    /**
-     * 搭配色彩选择对话框
-     */
-    private void showPromptColorDialog(TermuxPromptManager.PromptTheme theme) {
-        final List<TermuxPromptManager.PromptColor> colors = TermuxPromptManager.COLORS;
-        String[] colorNames = new String[colors.size()];
-        for (int i = 0; i < colors.size(); i++) {
-            colorNames[i] = colors.get(i).displayName;
-        }
-
-        String curColorId = TermuxPromptManager.getCurrentColorId(this);
-        int defaultIndex = 0;
-        for (int i = 0; i < colors.size(); i++) {
-            if (colors.get(i).id.equalsIgnoreCase(curColorId)) {
-                defaultIndex = i;
-                break;
-            }
-        }
-
-        new AlertDialog.Builder(this)
-            .setTitle("🎨 选择主打色彩 (" + theme.displayName + ")")
-            .setSingleChoiceItems(colorNames, defaultIndex, (dialog, which) -> {
-                TermuxPromptManager.PromptColor chosenColor = colors.get(which);
-                dialog.dismiss();
-                applyThemeAndColor(theme, chosenColor);
-            })
-            .setNegativeButton(R.string.action_cancel, null)
-            .show();
     }
 
     private void applyThemeAndColor(TermuxPromptManager.PromptTheme theme, TermuxPromptManager.PromptColor color) {
@@ -379,7 +439,7 @@ public class TermuxStyleActivity extends AppCompatActivity {
             if ("default".equalsIgnoreCase(theme.id)) {
                 Toast.makeText(this, "已恢复系统初始命令行样式", Toast.LENGTH_SHORT).show();
             } else {
-                Toast.makeText(this, "已动态应用：" + theme.displayName + " · " + color.displayName + "（就地热加载生效）", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "已动态应用：" + theme.displayName + " · " + color.displayName + "（一步到位）", Toast.LENGTH_SHORT).show();
             }
         }
     }
@@ -393,7 +453,6 @@ public class TermuxStyleActivity extends AppCompatActivity {
                 if (success) {
                     mCurrentColorText.setText(R.string.styling_color_scheme_summary);
                     mCurrentFontText.setText(R.string.styling_font_summary);
-                    mPreviewTerminalText.setTypeface(Typeface.MONOSPACE);
 
                     // 同步重置 Prompt 状态
                     TerminalSession session = TermuxActivity.sInstance != null ? TermuxActivity.sInstance.getCurrentSession() : null;
