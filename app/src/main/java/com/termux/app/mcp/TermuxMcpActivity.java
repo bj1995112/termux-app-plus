@@ -42,10 +42,22 @@ public class TermuxMcpActivity extends AppCompatActivity {
     private TextView mTvPort;
     private TextView mTvToken;
     private TextView mTvTimeout;
+    private TextView mTvPublicHost;
 
     private TextView mTvOAuthClientId;
     private TextView mTvOAuthClientSecret;
     private TextView mTvOAuthUrls;
+
+    // 独立工具开关
+    private SwitchMaterial mSwitchToolExec;
+    private SwitchMaterial mSwitchToolFile;
+    private SwitchMaterial mSwitchToolSys;
+    private SwitchMaterial mSwitchToolClip;
+    private SwitchMaterial mSwitchToolTorch;
+    private SwitchMaterial mSwitchToolTts;
+    private SwitchMaterial mSwitchToolFeedback;
+    private SwitchMaterial mSwitchToolUrl;
+    private SwitchMaterial mSwitchToolDownload;
 
     private int mTextColorPrimary;
     private int mTextColorSecondary;
@@ -305,6 +317,71 @@ public class TermuxMcpActivity extends AppCompatActivity {
         timeoutRow.addView(btnEditTimeout);
         configLayout.addView(timeoutRow);
 
+        addDivider(configLayout, density);
+
+        // 公网穿透域名 (ngrok / 穿透代理)
+        LinearLayout hostHeaderRow = new LinearLayout(this);
+        hostHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
+        hostHeaderRow.setGravity(Gravity.CENTER_VERTICAL);
+        hostHeaderRow.setPadding(0, (int) (6 * density), 0, 0);
+
+        LinearLayout hostTextCol = new LinearLayout(this);
+        hostTextCol.setOrientation(LinearLayout.VERTICAL);
+        hostTextCol.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
+
+        TextView tvHostLabel = new TextView(this);
+        tvHostLabel.setText("公网穿透域名 (ngrok / 穿透代理)");
+        tvHostLabel.setTextSize(14);
+        tvHostLabel.setTypeface(null, Typeface.BOLD);
+        tvHostLabel.setTextColor(mTextColorPrimary);
+        hostTextCol.addView(tvHostLabel);
+
+        TextView tvHostHint = new TextView(this);
+        tvHostHint.setText("配置后自动在 ChatGPT OAuth 与客户端清单中生成 HTTPS 地址");
+        tvHostHint.setTextSize(12);
+        tvHostHint.setTextColor(mTextColorSecondary);
+        hostTextCol.addView(tvHostHint);
+        hostHeaderRow.addView(hostTextCol);
+        configLayout.addView(hostHeaderRow);
+
+        mTvPublicHost = new TextView(this);
+        mTvPublicHost.setTextSize(13);
+        mTvPublicHost.setTypeface(Typeface.MONOSPACE);
+        mTvPublicHost.setTextColor(0xFF009688);
+        mTvPublicHost.setBackgroundColor(0x15009688);
+        mTvPublicHost.setPadding((int) (12 * density), (int) (8 * density), (int) (12 * density), (int) (8 * density));
+        LinearLayout.LayoutParams lpHSerial = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lpHSerial.topMargin = (int) (6 * density);
+        lpHSerial.bottomMargin = (int) (8 * density);
+        mTvPublicHost.setLayoutParams(lpHSerial);
+        mTvPublicHost.setOnClickListener(v -> showEditPublicHostDialog());
+        configLayout.addView(mTvPublicHost);
+
+        LinearLayout hostBtnRow = new LinearLayout(this);
+        hostBtnRow.setOrientation(LinearLayout.HORIZONTAL);
+        hostBtnRow.setGravity(Gravity.END);
+
+        MaterialButton btnEditHost = new MaterialButton(this);
+        btnEditHost.setText("设置公网域名");
+        btnEditHost.setTextSize(11);
+        btnEditHost.setOnClickListener(v -> showEditPublicHostDialog());
+        hostBtnRow.addView(btnEditHost);
+
+        View spacerHostBtn = new View(this);
+        spacerHostBtn.setLayoutParams(new LinearLayout.LayoutParams((int) (8 * density), 1));
+        hostBtnRow.addView(spacerHostBtn);
+
+        MaterialButton btnClearHost = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        btnClearHost.setText("清空");
+        btnClearHost.setTextSize(11);
+        btnClearHost.setOnClickListener(v -> {
+            TermuxMcpManager.getInstance().setPublicHost(this, "");
+            refreshUI();
+            Toast.makeText(this, "已清空公网域名（恢复使用本地局域网 IP）", Toast.LENGTH_SHORT).show();
+        });
+        hostBtnRow.addView(btnClearHost);
+        configLayout.addView(hostBtnRow);
+
         cardConfig.addView(configLayout);
         content.addView(cardConfig);
 
@@ -456,7 +533,106 @@ public class TermuxMcpActivity extends AppCompatActivity {
         content.addView(cardOAuth);
 
         // ────────────────────────────
-        // 卡片 4：客户端一键配置导出 (Cursor / Claude / ChatGPT)
+        // 卡片 4：MCP 工具能力与权限管理
+        // ────────────────────────────
+        MaterialCardView cardTools = createCard(density);
+        LinearLayout toolsLayout = createCardContent(density);
+
+        TextView tvTitleTools = createCardTitle("🛠️ MCP 工具能力与权限管理", density);
+        toolsLayout.addView(tvTitleTools);
+
+        TextView tvToolsDesc = new TextView(this);
+        tvToolsDesc.setText("可按需单独开启或关闭 AI 可用的各项执行工具。关闭的工具将从 MCP 协议中隐藏，且服务端直接拒绝执行，实现严格的安全最小特权原则。");
+        tvToolsDesc.setTextSize(12);
+        tvToolsDesc.setTextColor(mTextColorSecondary);
+        tvToolsDesc.setPadding(0, 0, 0, (int) (8 * density));
+        toolsLayout.addView(tvToolsDesc);
+
+        // 1. 命令执行
+        mSwitchToolExec = new SwitchMaterial(this);
+        toolsLayout.addView(createSwitchRow(
+            "终端命令执行 (execute_command)",
+            "允许 AI 在手机终端环境中运行任意 Shell 命令行与脚本",
+            mSwitchToolExec, density
+        ));
+        addDivider(toolsLayout, density);
+
+        // 2. 文件管理
+        mSwitchToolFile = new SwitchMaterial(this);
+        toolsLayout.addView(createSwitchRow(
+            "文件管理与读写 (read/write/list)",
+            "允许 AI 读取、写入修改手机文件与列举目录清单",
+            mSwitchToolFile, density
+        ));
+        addDivider(toolsLayout, density);
+
+        // 3. 系统状态
+        mSwitchToolSys = new SwitchMaterial(this);
+        toolsLayout.addView(createSwitchRow(
+            "系统状态查询 (get_system_info)",
+            "允许 AI 查询手机电量、内存占用、CPU型号与磁盘空间",
+            mSwitchToolSys, density
+        ));
+        addDivider(toolsLayout, density);
+
+        // 4. 剪贴板
+        mSwitchToolClip = new SwitchMaterial(this);
+        toolsLayout.addView(createSwitchRow(
+            "系统剪贴板交互 (get/set_clipboard)",
+            "允许 AI 读取手机当前复制的内容或向手机剪贴板写入文本",
+            mSwitchToolClip, density
+        ));
+        addDivider(toolsLayout, density);
+
+        // 5. 手电筒
+        mSwitchToolTorch = new SwitchMaterial(this);
+        toolsLayout.addView(createSwitchRow(
+            "闪光灯/手电筒控制 (termux_torch)",
+            "允许 AI 打开或关闭手机后置闪光灯",
+            mSwitchToolTorch, density
+        ));
+        addDivider(toolsLayout, density);
+
+        // 6. TTS 语音合成
+        mSwitchToolTts = new SwitchMaterial(this);
+        toolsLayout.addView(createSwitchRow(
+            "扬声器语音朗读 (termux_tts_speak)",
+            "允许 AI 通过手机自带扬声器实时朗读指定的文本字符串",
+            mSwitchToolTts, density
+        ));
+        addDivider(toolsLayout, density);
+
+        // 7. 屏幕气泡与通知
+        mSwitchToolFeedback = new SwitchMaterial(this);
+        toolsLayout.addView(createSwitchRow(
+            "状态栏通知与屏幕气泡 (toast/notify/vibrate)",
+            "允许 AI 弹出状态栏通知、手机屏幕浮动气泡(Toast)及振动",
+            mSwitchToolFeedback, density
+        ));
+        addDivider(toolsLayout, density);
+
+        // 8. 打开网页
+        mSwitchToolUrl = new SwitchMaterial(this);
+        toolsLayout.addView(createSwitchRow(
+            "默认浏览器打开链接 (open_url)",
+            "允许 AI 在手机系统默认浏览器中自动打开指定网页",
+            mSwitchToolUrl, density
+        ));
+        addDivider(toolsLayout, density);
+
+        // 9. 高速下载
+        mSwitchToolDownload = new SwitchMaterial(this);
+        toolsLayout.addView(createSwitchRow(
+            "高速网络下载 (download_file)",
+            "允许 AI 下载网络文件并直接保存至手机 Download 目录",
+            mSwitchToolDownload, density
+        ));
+
+        cardTools.addView(toolsLayout);
+        content.addView(cardTools);
+
+        // ────────────────────────────
+        // 卡片 5：客户端一键配置导出 (Cursor / Claude / ChatGPT)
         // ────────────────────────────
         MaterialCardView cardClients = createCard(density);
         LinearLayout clientsLayout = createCardContent(density);
@@ -566,7 +742,27 @@ public class TermuxMcpActivity extends AppCompatActivity {
             }
         });
 
+        // 绑定 9 大工具独立开关
+        bindToolSwitch(mSwitchToolExec, TermuxMcpManager.PREF_KEY_TOOL_EXEC_CMD, "终端命令执行");
+        bindToolSwitch(mSwitchToolFile, TermuxMcpManager.PREF_KEY_TOOL_FILE_OPS, "文件管理读写");
+        bindToolSwitch(mSwitchToolSys, TermuxMcpManager.PREF_KEY_TOOL_SYSTEM_INFO, "系统状态查询");
+        bindToolSwitch(mSwitchToolClip, TermuxMcpManager.PREF_KEY_TOOL_CLIPBOARD, "系统剪贴板交互");
+        bindToolSwitch(mSwitchToolTorch, TermuxMcpManager.PREF_KEY_TOOL_TORCH, "闪光灯/手电筒");
+        bindToolSwitch(mSwitchToolTts, TermuxMcpManager.PREF_KEY_TOOL_TTS, "扬声器语音朗读");
+        bindToolSwitch(mSwitchToolFeedback, TermuxMcpManager.PREF_KEY_TOOL_FEEDBACK, "通知气泡与振动");
+        bindToolSwitch(mSwitchToolUrl, TermuxMcpManager.PREF_KEY_TOOL_OPEN_URL, "浏览器打开网页");
+        bindToolSwitch(mSwitchToolDownload, TermuxMcpManager.PREF_KEY_TOOL_DOWNLOAD, "高速网络下载");
+
         refreshUI();
+    }
+
+    private void bindToolSwitch(SwitchMaterial switchView, String prefKey, String name) {
+        switchView.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (buttonView.isPressed()) {
+                TermuxMcpManager.getInstance().setToolEnabled(this, prefKey, isChecked);
+                Toast.makeText(this, (isChecked ? "已启用工具: " : "已关闭工具: ") + name, Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     private void refreshUI() {
@@ -576,18 +772,28 @@ public class TermuxMcpActivity extends AppCompatActivity {
         String token = manager.getToken(this);
         int timeoutSec = manager.getExecTimeoutSec(this);
         String localIp = TermuxMcpManager.getLocalIpAddress();
+        String publicHost = manager.getPublicHost(this);
 
         mSwitchService.setChecked(running);
         mSwitchAutoStart.setChecked(manager.isAutoStartEnabled(this));
         mSwitchWakeLock.setChecked(manager.isWakeLockEnabled(this));
 
+        // 公网穿透域名展示
+        if (publicHost != null && !publicHost.isEmpty()) {
+            mTvPublicHost.setText(publicHost);
+        } else {
+            mTvPublicHost.setText("未配置（当前使用局域网: http://" + localIp + ":" + port + "）");
+        }
+
+        String primaryEndpoint = (publicHost != null && !publicHost.isEmpty()) ? publicHost : ("http://" + localIp + ":" + port);
+
         if (running) {
             mTvStatus.setText("🟢 状态：运行中（双模与 OAuth 2.1 监听 0.0.0.0:" + port + "）");
             mTvStatus.setTextColor(0xFF2E7D32); // 绿色
             mTvAddress.setVisibility(View.VISIBLE);
-            mTvAddress.setText("局域网地址: http://" + localIp + ":" + port + "/mcp\n" +
-                              "经典 SSE 端点: http://" + localIp + ":" + port + "/sse\n" +
-                              "OAuth 发现: http://" + localIp + ":" + port + "/.well-known/oauth-authorization-server");
+            mTvAddress.setText("外部访问端点: " + primaryEndpoint + "/mcp\n" +
+                              "经典 SSE 端点: " + primaryEndpoint + "/sse\n" +
+                              "OAuth 发现: " + primaryEndpoint + "/.well-known/oauth-authorization-server");
         } else {
             mTvStatus.setText("⚪ 状态：未运行");
             mTvStatus.setTextColor(mTextColorSecondary);
@@ -601,9 +807,48 @@ public class TermuxMcpActivity extends AppCompatActivity {
         mTvOAuthClientId.setText(manager.getOAuthClientId(this));
         mTvOAuthClientSecret.setText(manager.getOAuthClientSecret(this));
         mTvOAuthUrls.setText(
-            "授权端点: http://" + localIp + ":" + port + "/oauth/authorize\n" +
-            "令牌端点: http://" + localIp + ":" + port + "/oauth/token"
+            "授权端点: " + primaryEndpoint + "/oauth/authorize\n" +
+            "令牌端点: " + primaryEndpoint + "/oauth/token"
         );
+
+        // 同步 9 个独立工具开关状态
+        mSwitchToolExec.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_EXEC_CMD));
+        mSwitchToolFile.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_FILE_OPS));
+        mSwitchToolSys.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_SYSTEM_INFO));
+        mSwitchToolClip.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_CLIPBOARD));
+        mSwitchToolTorch.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_TORCH));
+        mSwitchToolTts.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_TTS));
+        mSwitchToolFeedback.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_FEEDBACK));
+        mSwitchToolUrl.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_OPEN_URL));
+        mSwitchToolDownload.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_DOWNLOAD));
+    }
+
+    private void showEditPublicHostDialog() {
+        TermuxMcpManager manager = TermuxMcpManager.getInstance();
+        String currentHost = manager.getPublicHost(this);
+        if (currentHost == null || currentHost.isEmpty()) {
+            // 预填用户的有效 ngrok 域名，极大方便用户直接点击确定保存
+            currentHost = "https://exalted-embellish-unsorted.ngrok-free.dev";
+        }
+
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        input.setText(currentHost);
+        input.setSelectAllOnFocus(true);
+        input.setHint("https://your-domain.ngrok-free.dev");
+
+        new AlertDialog.Builder(this)
+            .setTitle("配置公网穿透域名")
+            .setMessage("请输入公网 HTTPS 完整域名（如 ngrok 分配的外网地址）：")
+            .setView(input)
+            .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                String host = input.getText().toString().trim();
+                manager.setPublicHost(this, host);
+                refreshUI();
+                Toast.makeText(this, "公网域名已保存！已自动联动全部配置清单与端点。", Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
     }
 
     private void showEditPortDialog() {

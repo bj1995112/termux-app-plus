@@ -32,6 +32,18 @@ public class TermuxMcpManager {
     public static final String PREF_KEY_WAKELOCK = "mcp_wakelock";
     public static final String PREF_KEY_OAUTH_CLIENT_ID = "mcp_oauth_client_id";
     public static final String PREF_KEY_OAUTH_CLIENT_SECRET = "mcp_oauth_client_secret";
+    public static final String PREF_KEY_PUBLIC_HOST = "mcp_public_host";
+
+    // 独立工具开关状态 Key
+    public static final String PREF_KEY_TOOL_EXEC_CMD = "mcp_tool_exec_cmd";
+    public static final String PREF_KEY_TOOL_FILE_OPS = "mcp_tool_file_ops";
+    public static final String PREF_KEY_TOOL_SYSTEM_INFO = "mcp_tool_system_info";
+    public static final String PREF_KEY_TOOL_CLIPBOARD = "mcp_tool_clipboard";
+    public static final String PREF_KEY_TOOL_TORCH = "mcp_tool_torch";
+    public static final String PREF_KEY_TOOL_TTS = "mcp_tool_tts";
+    public static final String PREF_KEY_TOOL_FEEDBACK = "mcp_tool_feedback";
+    public static final String PREF_KEY_TOOL_OPEN_URL = "mcp_tool_open_url";
+    public static final String PREF_KEY_TOOL_DOWNLOAD = "mcp_tool_download";
 
     public static final int DEFAULT_PORT = 28488;
     public static final int DEFAULT_EXEC_TIMEOUT_SEC = 60;
@@ -129,6 +141,28 @@ public class TermuxMcpManager {
                 releaseWakeLock();
             }
         }
+    }
+
+    public String getPublicHost(Context context) {
+        return getPrefs(context).getString(PREF_KEY_PUBLIC_HOST, "");
+    }
+
+    public void setPublicHost(Context context, String host) {
+        if (host != null) {
+            host = host.trim();
+            if (host.endsWith("/")) host = host.substring(0, host.length() - 1);
+        } else {
+            host = "";
+        }
+        getPrefs(context).edit().putString(PREF_KEY_PUBLIC_HOST, host).apply();
+    }
+
+    public boolean isToolEnabled(Context context, String toolKey) {
+        return getPrefs(context).getBoolean(toolKey, true);
+    }
+
+    public void setToolEnabled(Context context, String toolKey, boolean enabled) {
+        getPrefs(context).edit().putBoolean(toolKey, enabled).apply();
     }
 
     private synchronized void acquireWakeLock(Context context) {
@@ -273,9 +307,15 @@ public class TermuxMcpManager {
      */
     public String getCursorConfigJson(Context context) {
         int port = getPort(context);
-        String ip = getLocalIpAddress();
+        String publicHost = getPublicHost(context);
+        String url;
+        if (publicHost != null && !publicHost.isEmpty()) {
+            url = publicHost + "/mcp";
+        } else {
+            String ip = getLocalIpAddress();
+            url = "http://" + ip + ":" + port + "/mcp";
+        }
         String token = getToken(context);
-        String url = "http://" + ip + ":" + port + "/mcp";
 
         try {
             JSONObject root = new JSONObject();
@@ -300,9 +340,15 @@ public class TermuxMcpManager {
      */
     public String getClaudeConfigJson(Context context) {
         int port = getPort(context);
-        String ip = getLocalIpAddress();
+        String publicHost = getPublicHost(context);
         String token = getToken(context);
-        String sseUrl = "http://" + ip + ":" + port + "/sse" + (token != null && !token.isEmpty() ? "?token=" + token : "");
+        String sseUrl;
+        if (publicHost != null && !publicHost.isEmpty()) {
+            sseUrl = publicHost + "/sse" + (token != null && !token.isEmpty() ? "?token=" + token : "");
+        } else {
+            String ip = getLocalIpAddress();
+            sseUrl = "http://" + ip + ":" + port + "/sse" + (token != null && !token.isEmpty() ? "?token=" + token : "");
+        }
 
         try {
             JSONObject root = new JSONObject();
@@ -327,7 +373,11 @@ public class TermuxMcpManager {
      */
     public String getChatGptOpenApiSchema(Context context, String publicHost) {
         int port = getPort(context);
-        String host = (publicHost != null && !publicHost.isEmpty()) ? publicHost : "https://your-public-domain.trycloudflare.com";
+        String host = (publicHost != null && !publicHost.isEmpty()) ? publicHost : getPublicHost(context);
+        if (host == null || host.isEmpty()) {
+            String ip = getLocalIpAddress();
+            host = "http://" + ip + ":" + port;
+        }
         if (host.endsWith("/")) {
             host = host.substring(0, host.length() - 1);
         }
@@ -351,43 +401,236 @@ public class TermuxMcpManager {
             JSONObject paths = new JSONObject();
 
             // 1. POST /api/execute
-            JSONObject pExec = new JSONObject();
-            JSONObject opExec = new JSONObject();
-            opExec.put("operationId", "executeCommand");
-            opExec.put("summary", "在手机终端执行 Shell 命令行指令");
-            JSONObject reqBodyExec = new JSONObject();
-            JSONObject contentExec = new JSONObject();
-            JSONObject appJsonExec = new JSONObject();
-            JSONObject schemaExec = new JSONObject();
-            schemaExec.put("type", "object");
-            JSONObject propsExec = new JSONObject();
-            JSONObject pCmd = new JSONObject();
-            pCmd.put("type", "string");
-            pCmd.put("description", "要执行的命令行（如 ls -l, uname -a, pkg list 等）");
-            propsExec.put("command", pCmd);
-            JSONObject pCwd = new JSONObject();
-            pCwd.put("type", "string");
-            pCwd.put("description", "执行目录（可选，默认 Termux 用户家目录）");
-            propsExec.put("cwd", pCwd);
-            schemaExec.put("properties", propsExec);
-            JSONArray reqExec = new JSONArray();
-            reqExec.put("command");
-            schemaExec.put("required", reqExec);
-            appJsonExec.put("schema", schemaExec);
-            contentExec.put("application/json", appJsonExec);
-            reqBodyExec.put("content", contentExec);
-            reqBodyExec.put("required", true);
-            opExec.put("requestBody", reqBodyExec);
-            pExec.put("post", opExec);
-            paths.put("/api/execute", pExec);
+            if (isToolEnabled(context, PREF_KEY_TOOL_EXEC_CMD)) {
+                JSONObject pExec = new JSONObject();
+                JSONObject opExec = new JSONObject();
+                opExec.put("operationId", "executeCommand");
+                opExec.put("summary", "在手机终端执行 Shell 命令行指令");
+                JSONObject reqBodyExec = new JSONObject();
+                JSONObject contentExec = new JSONObject();
+                JSONObject appJsonExec = new JSONObject();
+                JSONObject schemaExec = new JSONObject();
+                schemaExec.put("type", "object");
+                JSONObject propsExec = new JSONObject();
+                JSONObject pCmd = new JSONObject();
+                pCmd.put("type", "string");
+                pCmd.put("description", "要执行的命令行（如 ls -l, uname -a, pkg list 等）");
+                propsExec.put("command", pCmd);
+                JSONObject pCwd = new JSONObject();
+                pCwd.put("type", "string");
+                pCwd.put("description", "执行目录（可选，默认 Termux 用户家目录）");
+                propsExec.put("cwd", pCwd);
+                schemaExec.put("properties", propsExec);
+                JSONArray reqExec = new JSONArray();
+                reqExec.put("command");
+                schemaExec.put("required", reqExec);
+                appJsonExec.put("schema", schemaExec);
+                contentExec.put("application/json", appJsonExec);
+                reqBodyExec.put("content", contentExec);
+                reqBodyExec.put("required", true);
+                opExec.put("requestBody", reqBodyExec);
+                pExec.put("post", opExec);
+                paths.put("/api/execute", pExec);
+            }
 
             // 2. GET /api/system
-            JSONObject pSys = new JSONObject();
-            JSONObject opSys = new JSONObject();
-            opSys.put("operationId", "getSystemInfo");
-            opSys.put("summary", "查询手机运行状态（型号、电量、CPU、可用运存、存储剩余）");
-            pSys.put("get", opSys);
-            paths.put("/api/system", pSys);
+            if (isToolEnabled(context, PREF_KEY_TOOL_SYSTEM_INFO)) {
+                JSONObject pSys = new JSONObject();
+                JSONObject opSys = new JSONObject();
+                opSys.put("operationId", "getSystemInfo");
+                opSys.put("summary", "查询手机运行状态（型号、电量、CPU、可用运存、存储剩余）");
+                pSys.put("get", opSys);
+                paths.put("/api/system", pSys);
+            }
+
+            // 3. GET / POST /api/clipboard
+            if (isToolEnabled(context, PREF_KEY_TOOL_CLIPBOARD)) {
+                JSONObject pClip = new JSONObject();
+                JSONObject opGetClip = new JSONObject();
+                opGetClip.put("operationId", "getClipboard");
+                opGetClip.put("summary", "读取手机 Android 系统剪贴板文字");
+                pClip.put("get", opGetClip);
+
+                JSONObject opSetClip = new JSONObject();
+                opSetClip.put("operationId", "setClipboard");
+                opSetClip.put("summary", "向手机 Android 系统剪贴板写入文本内容");
+                JSONObject rbClip = new JSONObject();
+                JSONObject cntClip = new JSONObject();
+                JSONObject ajClip = new JSONObject();
+                JSONObject scClip = new JSONObject();
+                scClip.put("type", "object");
+                JSONObject prClip = new JSONObject();
+                JSONObject pText = new JSONObject();
+                pText.put("type", "string");
+                pText.put("description", "要写入剪贴板的文字");
+                prClip.put("text", pText);
+                scClip.put("properties", prClip);
+                JSONArray rqClip = new JSONArray();
+                rqClip.put("text");
+                scClip.put("required", rqClip);
+                ajClip.put("schema", scClip);
+                cntClip.put("application/json", ajClip);
+                rbClip.put("content", cntClip);
+                rbClip.put("required", true);
+                opSetClip.put("requestBody", rbClip);
+                pClip.put("post", opSetClip);
+
+                paths.put("/api/clipboard", pClip);
+            }
+
+            // 4. POST /api/torch
+            if (isToolEnabled(context, PREF_KEY_TOOL_TORCH)) {
+                JSONObject pTorch = new JSONObject();
+                JSONObject opTorch = new JSONObject();
+                opTorch.put("operationId", "toggleTorch");
+                opTorch.put("summary", "控制开启或关闭手机手电筒/闪光灯");
+                JSONObject rbTorch = new JSONObject();
+                JSONObject cntTorch = new JSONObject();
+                JSONObject ajTorch = new JSONObject();
+                JSONObject scTorch = new JSONObject();
+                scTorch.put("type", "object");
+                JSONObject prTorch = new JSONObject();
+                JSONObject pEn = new JSONObject();
+                pEn.put("type", "boolean");
+                pEn.put("description", "true 为开启手电筒，false 为关闭");
+                prTorch.put("enabled", pEn);
+                scTorch.put("properties", prTorch);
+                JSONArray rqTorch = new JSONArray();
+                rqTorch.put("enabled");
+                scTorch.put("required", rqTorch);
+                ajTorch.put("schema", scTorch);
+                cntTorch.put("application/json", ajTorch);
+                rbTorch.put("content", cntTorch);
+                rbTorch.put("required", true);
+                opTorch.put("requestBody", rbTorch);
+                pTorch.put("post", opTorch);
+
+                paths.put("/api/torch", pTorch);
+            }
+
+            // 5. POST /api/tts
+            if (isToolEnabled(context, PREF_KEY_TOOL_TTS)) {
+                JSONObject pTts = new JSONObject();
+                JSONObject opTts = new JSONObject();
+                opTts.put("operationId", "speakText");
+                opTts.put("summary", "通过手机扬声器语音朗读指定文字");
+                JSONObject rbTts = new JSONObject();
+                JSONObject cntTts = new JSONObject();
+                JSONObject ajTts = new JSONObject();
+                JSONObject scTts = new JSONObject();
+                scTts.put("type", "object");
+                JSONObject prTts = new JSONObject();
+                JSONObject pTtsText = new JSONObject();
+                pTtsText.put("type", "string");
+                pTtsText.put("description", "要朗读的文本内容");
+                prTts.put("text", pTtsText);
+                scTts.put("properties", prTts);
+                JSONArray rqTts = new JSONArray();
+                rqTts.put("text");
+                scTts.put("required", rqTts);
+                ajTts.put("schema", scTts);
+                cntTts.put("application/json", ajTts);
+                rbTts.put("content", cntTts);
+                rbTts.put("required", true);
+                opTts.put("requestBody", rbTts);
+                pTts.put("post", opTts);
+
+                paths.put("/api/tts", pTts);
+            }
+
+            // 6. POST /api/toast
+            if (isToolEnabled(context, PREF_KEY_TOOL_FEEDBACK)) {
+                JSONObject pToast = new JSONObject();
+                JSONObject opToast = new JSONObject();
+                opToast.put("operationId", "showToast");
+                opToast.put("summary", "在手机屏幕上弹出浮动气泡提示(Toast)");
+                JSONObject rbToast = new JSONObject();
+                JSONObject cntToast = new JSONObject();
+                JSONObject ajToast = new JSONObject();
+                JSONObject scToast = new JSONObject();
+                scToast.put("type", "object");
+                JSONObject prToast = new JSONObject();
+                JSONObject pMsg = new JSONObject();
+                pMsg.put("type", "string");
+                pMsg.put("description", "浮动气泡文字");
+                prToast.put("message", pMsg);
+                scToast.put("properties", prToast);
+                JSONArray rqToast = new JSONArray();
+                rqToast.put("message");
+                scToast.put("required", rqToast);
+                ajToast.put("schema", scToast);
+                cntToast.put("application/json", ajToast);
+                rbToast.put("content", cntToast);
+                rbToast.put("required", true);
+                opToast.put("requestBody", rbToast);
+                pToast.put("post", opToast);
+
+                paths.put("/api/toast", pToast);
+            }
+
+            // 7. POST /api/open-url
+            if (isToolEnabled(context, PREF_KEY_TOOL_OPEN_URL)) {
+                JSONObject pUrl = new JSONObject();
+                JSONObject opUrl = new JSONObject();
+                opUrl.put("operationId", "openUrl");
+                opUrl.put("summary", "在手机系统默认浏览器中打开指定网页链接");
+                JSONObject rbUrl = new JSONObject();
+                JSONObject cntUrl = new JSONObject();
+                JSONObject ajUrl = new JSONObject();
+                JSONObject scUrl = new JSONObject();
+                scUrl.put("type", "object");
+                JSONObject prUrl = new JSONObject();
+                JSONObject pUrlStr = new JSONObject();
+                pUrlStr.put("type", "string");
+                pUrlStr.put("description", "网页链接 URL");
+                prUrl.put("url", pUrlStr);
+                scUrl.put("properties", prUrl);
+                JSONArray rqUrl = new JSONArray();
+                rqUrl.put("url");
+                scUrl.put("required", rqUrl);
+                ajUrl.put("schema", scUrl);
+                cntUrl.put("application/json", ajUrl);
+                rbUrl.put("content", cntUrl);
+                rbUrl.put("required", true);
+                opUrl.put("requestBody", rbUrl);
+                pUrl.put("post", opUrl);
+
+                paths.put("/api/open-url", pUrl);
+            }
+
+            // 8. POST /api/download
+            if (isToolEnabled(context, PREF_KEY_TOOL_DOWNLOAD)) {
+                JSONObject pDl = new JSONObject();
+                JSONObject opDl = new JSONObject();
+                opDl.put("operationId", "downloadFile");
+                opDl.put("summary", "下载互联网文件并保存至手机目录");
+                JSONObject rbDl = new JSONObject();
+                JSONObject cntDl = new JSONObject();
+                JSONObject ajDl = new JSONObject();
+                JSONObject scDl = new JSONObject();
+                scDl.put("type", "object");
+                JSONObject prDl = new JSONObject();
+                JSONObject pDlUrl = new JSONObject();
+                pDlUrl.put("type", "string");
+                pDlUrl.put("description", "要下载的文件直链 URL");
+                prDl.put("url", pDlUrl);
+                JSONObject pDlDest = new JSONObject();
+                pDlDest.put("type", "string");
+                pDlDest.put("description", "手机保存路径（可选，默认 /sdcard/Download/文件名）");
+                prDl.put("dest_path", pDlDest);
+                scDl.put("properties", prDl);
+                JSONArray rqDl = new JSONArray();
+                rqDl.put("url");
+                scDl.put("required", rqDl);
+                ajDl.put("schema", scDl);
+                cntDl.put("application/json", ajDl);
+                rbDl.put("content", cntDl);
+                rbDl.put("required", true);
+                opDl.put("requestBody", rbDl);
+                pDl.put("post", opDl);
+
+                paths.put("/api/download", pDl);
+            }
 
             root.put("paths", paths);
             return root.toString(2);
@@ -409,7 +652,8 @@ public class TermuxMcpManager {
      */
     public String getChatGptOAuthSnippet(Context context, String host) {
         int port = getPort(context);
-        String baseHost = (host != null && !host.isEmpty()) ? host : "https://你的公网域名(如ngrok或自建穿透)";
+        String publicHost = getPublicHost(context);
+        String baseHost = (host != null && !host.isEmpty()) ? host : (publicHost != null && !publicHost.isEmpty() ? publicHost : "http://" + getLocalIpAddress() + ":" + port);
         if (baseHost.endsWith("/")) {
             baseHost = baseHost.substring(0, baseHost.length() - 1);
         }
