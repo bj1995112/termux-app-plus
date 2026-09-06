@@ -34,11 +34,17 @@ __termux_prompt_apply() {
     fi
 
     if [ "$theme" = "default" ]; then
-        # 原生默认：若有初始备份则恢复，否则不做改写
+        # 原生默认：若有初始备份则恢复，否则恢复为系统原生标准 PS1
         if [ -n "$__TERMUX_ORIG_PS1" ]; then
             PS1="$__TERMUX_ORIG_PS1"
-            export PS1
+        else
+            if [ -f /etc/debian_version ] || [ -n "$debian_chroot" ]; then
+                PS1='${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+            else
+                PS1='\[\e[0;32m\]\w\[\e[0m\] \[\e[0;97m\]\$\[\e[0m\] '
+            fi
         fi
+        export PS1
         return $__ret
     fi
 
