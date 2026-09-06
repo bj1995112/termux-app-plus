@@ -2,6 +2,7 @@ package com.termux.app.mcp;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.PowerManager;
 
 import com.termux.shared.logger.Logger;
 
@@ -27,11 +28,18 @@ public class TermuxMcpManager {
     public static final String PREF_KEY_AUTO_START = "mcp_auto_start";
     public static final String PREF_KEY_PORT = "mcp_port";
     public static final String PREF_KEY_TOKEN = "mcp_token";
+    public static final String PREF_KEY_EXEC_TIMEOUT_SEC = "mcp_exec_timeout_sec";
+    public static final String PREF_KEY_WAKELOCK = "mcp_wakelock";
+    public static final String PREF_KEY_OAUTH_CLIENT_ID = "mcp_oauth_client_id";
+    public static final String PREF_KEY_OAUTH_CLIENT_SECRET = "mcp_oauth_client_secret";
 
     public static final int DEFAULT_PORT = 28488;
+    public static final int DEFAULT_EXEC_TIMEOUT_SEC = 60;
+    public static final String DEFAULT_OAUTH_CLIENT_ID = "termux-mcp";
 
     private static TermuxMcpManager sInstance;
     private TermuxMcpServer mServer;
+    private PowerManager.WakeLock mWakeLock;
 
     private TermuxMcpManager() {}
 
@@ -98,6 +106,87 @@ public class TermuxMcpManager {
         return sb.toString();
     }
 
+    public int getExecTimeoutSec(Context context) {
+        return getPrefs(context).getInt(PREF_KEY_EXEC_TIMEOUT_SEC, DEFAULT_EXEC_TIMEOUT_SEC);
+    }
+
+    public void setExecTimeoutSec(Context context, int sec) {
+        if (sec < 5) sec = 5;
+        if (sec > 86400) sec = 86400; // 最大 24 小时
+        getPrefs(context).edit().putInt(PREF_KEY_EXEC_TIMEOUT_SEC, sec).apply();
+    }
+
+    public boolean isWakeLockEnabled(Context context) {
+        return getPrefs(context).getBoolean(PREF_KEY_WAKELOCK, true);
+    }
+
+    public void setWakeLockEnabled(Context context, boolean enabled) {
+        getPrefs(context).edit().putBoolean(PREF_KEY_WAKELOCK, enabled).apply();
+        if (isServerRunning()) {
+            if (enabled) {
+                acquireWakeLock(context);
+            } else {
+                releaseWakeLock();
+            }
+        }
+    }
+
+    private synchronized void acquireWakeLock(Context context) {
+        if (mWakeLock == null) {
+            try {
+                PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Termux:McpServerWakeLock");
+                    mWakeLock.setReferenceCounted(false);
+                    mWakeLock.acquire();
+                    Logger.logInfo(LOG_TAG, "MCP WakeLock acquired.");
+                }
+            } catch (Exception e) {
+                Logger.logError(LOG_TAG, "Failed to acquire WakeLock: " + e.getMessage());
+            }
+        }
+    }
+
+    private synchronized void releaseWakeLock() {
+        if (mWakeLock != null) {
+            try {
+                if (mWakeLock.isHeld()) {
+                    mWakeLock.release();
+                }
+            } catch (Exception ignored) {}
+            mWakeLock = null;
+            Logger.logInfo(LOG_TAG, "MCP WakeLock released.");
+        }
+    }
+
+    public String getOAuthClientId(Context context) {
+        return getPrefs(context).getString(PREF_KEY_OAUTH_CLIENT_ID, DEFAULT_OAUTH_CLIENT_ID);
+    }
+
+    public void setOAuthClientId(Context context, String clientId) {
+        getPrefs(context).edit().putString(PREF_KEY_OAUTH_CLIENT_ID, clientId != null ? clientId.trim() : DEFAULT_OAUTH_CLIENT_ID).apply();
+    }
+
+    public String getOAuthClientSecret(Context context) {
+        SharedPreferences prefs = getPrefs(context);
+        String secret = prefs.getString(PREF_KEY_OAUTH_CLIENT_SECRET, null);
+        if (secret == null || secret.isEmpty()) {
+            secret = generateRandomToken() + generateRandomToken();
+            prefs.edit().putString(PREF_KEY_OAUTH_CLIENT_SECRET, secret).apply();
+        }
+        return secret;
+    }
+
+    public void setOAuthClientSecret(Context context, String secret) {
+        getPrefs(context).edit().putString(PREF_KEY_OAUTH_CLIENT_SECRET, secret != null ? secret.trim() : "").apply();
+    }
+
+    public String resetOAuthClientSecret(Context context) {
+        String secret = generateRandomToken() + generateRandomToken();
+        getPrefs(context).edit().putString(PREF_KEY_OAUTH_CLIENT_SECRET, secret).apply();
+        return secret;
+    }
+
     public synchronized boolean isServerRunning() {
         return mServer != null && mServer.isRunning();
     }
@@ -113,6 +202,11 @@ public class TermuxMcpManager {
             mServer = new TermuxMcpServer(context.getApplicationContext(), port, token);
             mServer.start();
             setEnabled(context, true);
+
+            if (isWakeLockEnabled(context)) {
+                acquireWakeLock(context);
+            }
+
             Logger.logInfo(LOG_TAG, "MCP Server successfully started on port " + port);
             return true;
         } catch (Exception e) {
@@ -131,6 +225,7 @@ public class TermuxMcpManager {
             }
             mServer = null;
         }
+        releaseWakeLock();
         if (context != null) {
             setEnabled(context, false);
         }
@@ -307,5 +402,26 @@ public class TermuxMcpManager {
     public String getCloudflareCommand(Context context) {
         int port = getPort(context);
         return "cloudflared tunnel --url http://127.0.0.1:" + port;
+    }
+
+    /**
+     * 生成供 ChatGPT Custom Actions 填报的 OAuth 2.1 专属配置清单
+     */
+    public String getChatGptOAuthSnippet(Context context, String host) {
+        int port = getPort(context);
+        String baseHost = (host != null && !host.isEmpty()) ? host : "https://your-public-domain.trycloudflare.com";
+        if (baseHost.endsWith("/")) {
+            baseHost = baseHost.substring(0, baseHost.length() - 1);
+        }
+
+        return "【ChatGPT Custom Action OAuth 2.1 填报清单】\n\n" +
+            "1. 身份验证类型 (Authentication Type): OAuth\n" +
+            "2. 客户端 ID (Client ID): " + getOAuthClientId(context) + "\n" +
+            "3. 客户端密钥 (Client Secret): " + getOAuthClientSecret(context) + "\n" +
+            "4. 授权 URL (Authorization URL): " + baseHost + "/oauth/authorize\n" +
+            "5. 令牌 URL (Token URL): " + baseHost + "/oauth/token\n" +
+            "6. 作用域 (Scope): execute\n" +
+            "7. 令牌交换方式 (Token Exchange Method): POST (支持 PKCE S256 与 Client Secret 凭据)\n\n" +
+            "※ 温馨提示：如果使用 Cloudflare Tunnel / FRP 等内网穿透，请将上述 Authorization URL 和 Token URL 中的前缀修改为您生成的公网 HTTPS 域名。";
     }
 }
