@@ -167,9 +167,9 @@ public class TermuxStyleManager {
     }
 
     public static void notifyReloadStyle(Context context, boolean isColor) {
-        Intent reloadIntent = new Intent(TermuxConstants.TERMUX_ACTIVITY.ACTION_RELOAD_STYLE);
-        reloadIntent.putExtra(TermuxConstants.TERMUX_ACTIVITY.ACTION_RELOAD_STYLE, isColor ? "colors" : "font");
-        reloadIntent.putExtra(TermuxConstants.TERMUX_ACTIVITY.EXTRA_RECREATE_ACTIVITY, true);
+        Intent reloadIntent = new Intent(TermuxConstants.TERMUX_APP.TERMUX_ACTIVITY.ACTION_RELOAD_STYLE);
+        reloadIntent.putExtra(TermuxConstants.TERMUX_APP.TERMUX_ACTIVITY.ACTION_RELOAD_STYLE, isColor ? "colors" : "font");
+        reloadIntent.putExtra(TermuxConstants.TERMUX_APP.TERMUX_ACTIVITY.EXTRA_RECREATE_ACTIVITY, true);
         context.sendBroadcast(reloadIntent);
     }
 }
