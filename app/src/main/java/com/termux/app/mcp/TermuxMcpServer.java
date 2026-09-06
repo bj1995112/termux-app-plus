@@ -782,7 +782,7 @@ public class TermuxMcpServer {
             NotificationManager nm = (NotificationManager) mContext.getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm != null) {
                 NotificationUtils.setupNotificationChannel(mContext, TermuxConstants.TERMUX_APP_NOTIFICATION_CHANNEL_ID, "Termux+ Notifications", NotificationManager.IMPORTANCE_HIGH);
-                Notification.Builder builder = NotificationUtils.geNotificationBuilder(mContext, TermuxConstants.TERMUX_APP_NOTIFICATION_CHANNEL_ID, NotificationUtils.NOTIFICATION_PRIORITY_HIGH, title, content, null, null, NotificationUtils.NOTIFICATION_MODE_NORMAL);
+                Notification.Builder builder = NotificationUtils.geNotificationBuilder(mContext, TermuxConstants.TERMUX_APP_NOTIFICATION_CHANNEL_ID, Notification.PRIORITY_HIGH, title, content, content, null, null, NotificationUtils.NOTIFICATION_MODE_ALL);
                 if (builder != null) {
                     builder.setSmallIcon(R.drawable.ic_terminal);
                     nm.notify((int) System.currentTimeMillis(), builder.build());
