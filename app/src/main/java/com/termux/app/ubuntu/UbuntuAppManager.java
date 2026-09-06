@@ -15,7 +15,6 @@ import java.util.Set;
 
 public class UbuntuAppManager {
 
-    private static final String ROOTFS_BASE_PATH = "/data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs";
     private static String sDefaultDistroName = "ubuntu";
 
     public static class AppItem {
@@ -36,9 +35,11 @@ public class UbuntuAppManager {
     private static final AppItem[] KNOWN_AI_APPS = new AppItem[]{
         new AppItem("pi", "⚡ Pi", "pi", "ubuntu"),
         new AppItem("codex", "🤖 Codex", "codex", "ubuntu"),
+        new AppItem("codex-zh", "🇨🇳 Codex-ZH", "codex-zh", "ubuntu"),
         new AppItem("opencode", "💻 OpenCode", "opencode", "ubuntu"),
         new AppItem("claude", "🧠 Claude", "claude", "ubuntu"),
         new AppItem("agy", "🚀 AGY", "agy", "ubuntu"),
+        new AppItem("codeman", "📦 CodeMan", "codeman", "ubuntu"),
         new AppItem("aider", "🤝 Aider", "aider", "ubuntu"),
         new AppItem("copilot", "✈️ Copilot", "copilot", "ubuntu"),
         new AppItem("gh-copilot", "✈️ Copilot", "gh copilot", "ubuntu"),
@@ -56,22 +57,40 @@ public class UbuntuAppManager {
         new AppItem("tabby", "🐱 Tabby", "tabby", "ubuntu"),
         new AppItem("continue", "⏩ Continue", "continue", "ubuntu"),
         new AppItem("fabric", "🧵 Fabric", "fabric", "ubuntu"),
-        new AppItem("khoj", "🔍 Khoj", "khoj", "ubuntu"),
-        new AppItem("codeman", "📦 CodeMan", "codeman", "ubuntu")
+        new AppItem("khoj", "🔍 Khoj", "khoj", "ubuntu")
     };
 
-    public static List<File> getInstalledDistroRoots() {
+    public static List<File> getInstalledDistroRoots(Context context) {
         List<File> distros = new ArrayList<>();
-        File base = new File(ROOTFS_BASE_PATH);
-        if (base.exists() && base.isDirectory()) {
-            File[] files = base.listFiles();
+        File filesDir = context != null ? context.getFilesDir() : new File("/data/data/com.termux/files");
+
+        // 1. 官方 proot-distro 现代路径: usr/var/lib/proot-distro/containers/<name>/rootfs
+        File containersDir = new File(filesDir, "usr/var/lib/proot-distro/containers");
+        if (containersDir.exists() && containersDir.isDirectory()) {
+            File[] files = containersDir.listFiles();
             if (files != null) {
                 for (File f : files) {
                     if (f.isDirectory()) {
-                        distros.add(f);
-                        if (sDefaultDistroName == null || sDefaultDistroName.equals("ubuntu")) {
+                        File rfs = new File(f, "rootfs");
+                        if (rfs.exists() && rfs.isDirectory()) {
+                            distros.add(rfs);
                             sDefaultDistroName = f.getName();
+                        } else {
+                            distros.add(f);
                         }
+                    }
+                }
+            }
+        }
+
+        // 2. 兼容旧版本路径: usr/var/lib/proot-distro/installed-rootfs/<name>
+        File oldBase = new File(filesDir, "usr/var/lib/proot-distro/installed-rootfs");
+        if (oldBase.exists() && oldBase.isDirectory()) {
+            File[] files = oldBase.listFiles();
+            if (files != null) {
+                for (File f : files) {
+                    if (f.isDirectory() && !distros.contains(f)) {
+                        distros.add(f);
                     }
                 }
             }
@@ -79,18 +98,13 @@ public class UbuntuAppManager {
         return distros;
     }
 
-    public static boolean isProotDistroInstalled() {
-        return !getInstalledDistroRoots().isEmpty();
-    }
-
     public static List<AppItem> getInstalledApps(Context context) {
         List<AppItem> result = new ArrayList<>();
         Set<String> addedIds = new HashSet<>();
 
-        // 仅深入扫描 Ubuntu 及所有 proot-distro 容器
-        List<File> distroRoots = getInstalledDistroRoots();
+        // 深入扫描 Ubuntu 容器真正的 rootfs 目录
+        List<File> distroRoots = getInstalledDistroRoots(context);
         for (File rootfs : distroRoots) {
-            String distro = rootfs.getName();
             List<File> dirs = new ArrayList<>();
             dirs.add(new File(rootfs, "usr/bin"));
             dirs.add(new File(rootfs, "usr/local/bin"));
@@ -125,7 +139,7 @@ public class UbuntuAppManager {
                 for (AppItem known : KNOWN_AI_APPS) {
                     if (nameSet.contains(known.id)) {
                         if (!addedIds.contains(known.id)) {
-                            result.add(new AppItem(known.id, known.displayName, known.command, distro));
+                            result.add(new AppItem(known.id, known.displayName, known.command, sDefaultDistroName));
                             addedIds.add(known.id);
                         }
                     }

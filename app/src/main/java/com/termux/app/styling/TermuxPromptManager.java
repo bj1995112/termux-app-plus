@@ -460,43 +460,36 @@ public class TermuxPromptManager {
             }
 
             // B. 深度穿透写入 Ubuntu (proot-distro) 容器内部
-            File rootfsBase = new File(context.getFilesDir(), "usr/var/lib/proot-distro/installed-rootfs");
-            if (rootfsBase.exists() && rootfsBase.isDirectory()) {
-                File[] distros = rootfsBase.listFiles();
-                if (distros != null) {
-                    for (File distro : distros) {
-                        if (!distro.isDirectory()) continue;
+            List<File> distroRoots = UbuntuAppManager.getInstalledDistroRoots(context);
+            for (File distro : distroRoots) {
+                // 1. 写入 /etc/profile.d/termux_prompt.sh (Ubuntu 所有登录 Shell 必定加载)
+                File profileD = new File(distro, "etc/profile.d");
+                if (!profileD.exists()) profileD.mkdirs();
+                File uPromptFile = new File(profileD, "termux_prompt.sh");
+                writeFile(uPromptFile, promptBytes);
 
-                        // 1. 写入 /etc/profile.d/termux_prompt.sh (Ubuntu 所有登录 Shell 必定加载)
-                        File profileD = new File(distro, "etc/profile.d");
-                        if (!profileD.exists()) profileD.mkdirs();
-                        File uPromptFile = new File(profileD, "termux_prompt.sh");
-                        writeFile(uPromptFile, promptBytes);
+                // 2. 写入 /etc/bash.bashrc (Ubuntu 全局非登录 Shell 必读)
+                File uBashrc = new File(distro, "etc/bash.bashrc");
+                if (uBashrc.exists()) {
+                    appendOnce(uBashrc, "\n[ -f /etc/profile.d/termux_prompt.sh ] && . /etc/profile.d/termux_prompt.sh\n", "termux_prompt.sh");
+                }
 
-                        // 2. 写入 /etc/bash.bashrc (Ubuntu 全局非登录 Shell 必读)
-                        File uBashrc = new File(distro, "etc/bash.bashrc");
-                        if (uBashrc.exists()) {
-                            appendOnce(uBashrc, "\n[ -f /etc/profile.d/termux_prompt.sh ] && . /etc/profile.d/termux_prompt.sh\n", "termux_prompt.sh");
-                        }
-
-                        // 3. 写入 /root/.bashrc
-                        File uRootBashrc = new File(distro, "root/.bashrc");
-                        if (uRootBashrc.exists()) {
-                            appendOnce(uRootBashrc, "\n[ -f /etc/profile.d/termux_prompt.sh ] && . /etc/profile.d/termux_prompt.sh\n", "termux_prompt.sh");
-                        }
-                    }
+                // 3. 写入 /root/.bashrc (确保放在最末尾，优先级最高，覆盖 termux-webui)
+                File uRootBashrc = new File(distro, "root/.bashrc");
+                if (uRootBashrc.exists()) {
+                    appendOnce(uRootBashrc, "\n# Termux+ Prompt Style\n" + item.ps1Script + "\nexport PS1\n", "Termux+ Prompt Style");
                 }
             }
 
-            // C. 毫秒级热加载：向活跃终端 Session 发送中断与就地重载指令
+            // C. 毫秒级热加载：直接向活跃终端发送 export PS1 命令，绝对零语法错误
             if (activity != null && activity.getTermuxService() != null) {
                 List<TermuxSession> termuxSessions = activity.getTermuxService().getTermuxSessions();
                 if (termuxSessions != null) {
                     for (TermuxSession tSession : termuxSessions) {
                         TerminalSession ts = tSession.getTerminalSession();
                         if (ts != null && ts.isRunning()) {
-                            // 先发送 \x03 (Ctrl+C) 清理残余行，紧接着智能适配并执行对应环境的 prompt 脚本
-                            String reloadCmd = "\u0003if [ -f /etc/profile.d/termux_prompt.sh ]; then . /etc/profile.d/termux_prompt.sh; elif [ -f ~/.termux/prompt.sh ]; then . ~/.termux/prompt.sh; fi\n";
+                            // 先换行 + Ctrl+C 取消残余输入，然后直接设置 PS1 并 export，当前终端立即刷新变身！
+                            String reloadCmd = "\n\u0003" + item.ps1Script + "; export PS1\n";
                             ts.write(reloadCmd);
                         }
                     }
