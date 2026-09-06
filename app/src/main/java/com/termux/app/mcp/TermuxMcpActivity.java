@@ -59,6 +59,13 @@ public class TermuxMcpActivity extends AppCompatActivity {
     private SwitchMaterial mSwitchToolUrl;
     private SwitchMaterial mSwitchToolDownload;
 
+    // OpenAI 官方原生安全隧道
+    private SwitchMaterial mSwitchOpenAiTunnel;
+    private TextView mTvOpenAiStatus;
+    private TextView mTvOpenAiTunnelId;
+    private TextView mTvOpenAiApiKey;
+    private TextView mTvOpenAiProxy;
+
     private int mTextColorPrimary;
     private int mTextColorSecondary;
 
@@ -533,7 +540,233 @@ public class TermuxMcpActivity extends AppCompatActivity {
         content.addView(cardOAuth);
 
         // ────────────────────────────
-        // 卡片 4：MCP 工具能力与权限管理
+        // 卡片 4：OpenAI 官方原生安全隧道 (Secure MCP Tunnel)
+        // ────────────────────────────
+        MaterialCardView cardOpenAi = createCard(density);
+        LinearLayout openAiLayout = createCardContent(density);
+
+        TextView tvTitleOpenAi = createCardTitle("🌐 OpenAI 原生安全隧道 (免公网穿透 · 无限流量)", density);
+        openAiLayout.addView(tvTitleOpenAi);
+
+        TextView tvOpenAiDesc = new TextView(this);
+        tvOpenAiDesc.setText("基于 OpenAI 官方开源的 tunnel-client 出站专线架构。由手机直接与 OpenAI 云端建立双向通道，无需公网 IP、无第三方流量配额限制，解决 ngrok 流量不足难题。");
+        tvOpenAiDesc.setTextSize(12);
+        tvOpenAiDesc.setTextColor(mTextColorSecondary);
+        tvOpenAiDesc.setPadding(0, 0, 0, (int) (8 * density));
+        openAiLayout.addView(tvOpenAiDesc);
+
+        mSwitchOpenAiTunnel = new SwitchMaterial(this);
+        openAiLayout.addView(createSwitchRow(
+            "启用 OpenAI 官方安全隧道",
+            "后台自动拉起 tunnel-client 保持出站长连接",
+            mSwitchOpenAiTunnel, density
+        ));
+
+        mTvOpenAiStatus = new TextView(this);
+        mTvOpenAiStatus.setTextSize(12);
+        mTvOpenAiStatus.setPadding(0, (int) (2 * density), 0, (int) (6 * density));
+        openAiLayout.addView(mTvOpenAiStatus);
+
+        addDivider(openAiLayout, density);
+
+        // Tunnel ID 行
+        LinearLayout tidHeaderRow = new LinearLayout(this);
+        tidHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
+        tidHeaderRow.setGravity(Gravity.CENTER_VERTICAL);
+        tidHeaderRow.setPadding(0, (int) (4 * density), 0, 0);
+
+        LinearLayout tidTextCol = new LinearLayout(this);
+        tidTextCol.setOrientation(LinearLayout.VERTICAL);
+        tidTextCol.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
+
+        TextView tvTidLabel = new TextView(this);
+        tvTidLabel.setText("Tunnel ID (控制面隧道 ID)");
+        tvTidLabel.setTextSize(14);
+        tvTidLabel.setTypeface(null, Typeface.BOLD);
+        tvTidLabel.setTextColor(mTextColorPrimary);
+        tidTextCol.addView(tvTidLabel);
+
+        TextView tvTidHint = new TextView(this);
+        tvTidHint.setText("在 platform.openai.com/settings/organization/tunnels 中获取");
+        tvTidHint.setTextSize(12);
+        tvTidHint.setTextColor(mTextColorSecondary);
+        tidTextCol.addView(tvTidHint);
+        tidHeaderRow.addView(tidTextCol);
+        openAiLayout.addView(tidHeaderRow);
+
+        mTvOpenAiTunnelId = new TextView(this);
+        mTvOpenAiTunnelId.setTextSize(13);
+        mTvOpenAiTunnelId.setTypeface(Typeface.MONOSPACE);
+        mTvOpenAiTunnelId.setTextColor(0xFF009688);
+        mTvOpenAiTunnelId.setBackgroundColor(0x15009688);
+        mTvOpenAiTunnelId.setPadding((int) (12 * density), (int) (8 * density), (int) (12 * density), (int) (8 * density));
+        LinearLayout.LayoutParams lpTid = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lpTid.topMargin = (int) (6 * density);
+        lpTid.bottomMargin = (int) (6 * density);
+        mTvOpenAiTunnelId.setLayoutParams(lpTid);
+        mTvOpenAiTunnelId.setOnClickListener(v -> showEditOpenAiTunnelIdDialog());
+        openAiLayout.addView(mTvOpenAiTunnelId);
+
+        LinearLayout tidBtnRow = new LinearLayout(this);
+        tidBtnRow.setOrientation(LinearLayout.HORIZONTAL);
+        tidBtnRow.setGravity(Gravity.END);
+
+        MaterialButton btnEditTid = new MaterialButton(this);
+        btnEditTid.setText("配置 Tunnel ID");
+        btnEditTid.setTextSize(11);
+        btnEditTid.setOnClickListener(v -> showEditOpenAiTunnelIdDialog());
+        tidBtnRow.addView(btnEditTid);
+        openAiLayout.addView(tidBtnRow);
+
+        addDivider(openAiLayout, density);
+
+        // API Key 行
+        LinearLayout keyHeaderRow = new LinearLayout(this);
+        keyHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
+        keyHeaderRow.setGravity(Gravity.CENTER_VERTICAL);
+        keyHeaderRow.setPadding(0, (int) (4 * density), 0, 0);
+
+        LinearLayout keyTextCol = new LinearLayout(this);
+        keyTextCol.setOrientation(LinearLayout.VERTICAL);
+        keyTextCol.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
+
+        TextView tvKeyLabel = new TextView(this);
+        tvKeyLabel.setText("Runtime API Key (运行时凭证)");
+        tvKeyLabel.setTextSize(14);
+        tvKeyLabel.setTypeface(null, Typeface.BOLD);
+        tvKeyLabel.setTextColor(mTextColorPrimary);
+        keyTextCol.addView(tvKeyLabel);
+
+        TextView tvKeyHint = new TextView(this);
+        tvKeyHint.setText("在 platform.openai.com/settings/organization/api-keys 中创建");
+        tvKeyHint.setTextSize(12);
+        tvKeyHint.setTextColor(mTextColorSecondary);
+        keyTextCol.addView(tvKeyHint);
+        keyHeaderRow.addView(keyTextCol);
+        openAiLayout.addView(keyHeaderRow);
+
+        mTvOpenAiApiKey = new TextView(this);
+        mTvOpenAiApiKey.setTextSize(13);
+        mTvOpenAiApiKey.setTypeface(Typeface.MONOSPACE);
+        mTvOpenAiApiKey.setTextColor(0xFF009688);
+        mTvOpenAiApiKey.setBackgroundColor(0x15009688);
+        mTvOpenAiApiKey.setPadding((int) (12 * density), (int) (8 * density), (int) (12 * density), (int) (8 * density));
+        LinearLayout.LayoutParams lpKey = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lpKey.topMargin = (int) (6 * density);
+        lpKey.bottomMargin = (int) (6 * density);
+        mTvOpenAiApiKey.setLayoutParams(lpKey);
+        mTvOpenAiApiKey.setOnClickListener(v -> showEditOpenAiApiKeyDialog());
+        openAiLayout.addView(mTvOpenAiApiKey);
+
+        LinearLayout keyBtnRow = new LinearLayout(this);
+        keyBtnRow.setOrientation(LinearLayout.HORIZONTAL);
+        keyBtnRow.setGravity(Gravity.END);
+
+        MaterialButton btnEditKey = new MaterialButton(this);
+        btnEditKey.setText("配置 API Key");
+        btnEditKey.setTextSize(11);
+        btnEditKey.setOnClickListener(v -> showEditOpenAiApiKeyDialog());
+        keyBtnRow.addView(btnEditKey);
+        openAiLayout.addView(keyBtnRow);
+
+        addDivider(openAiLayout, density);
+
+        // 前置代理行 (选填)
+        LinearLayout proxyHeaderRow = new LinearLayout(this);
+        proxyHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
+        proxyHeaderRow.setGravity(Gravity.CENTER_VERTICAL);
+        proxyHeaderRow.setPadding(0, (int) (4 * density), 0, 0);
+
+        LinearLayout proxyTextCol = new LinearLayout(this);
+        proxyTextCol.setOrientation(LinearLayout.VERTICAL);
+        proxyTextCol.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
+
+        TextView tvProxyLabel = new TextView(this);
+        tvProxyLabel.setText("出站前置代理 (选填 · 科学上网环境)");
+        tvProxyLabel.setTextSize(14);
+        tvProxyLabel.setTypeface(null, Typeface.BOLD);
+        tvProxyLabel.setTextColor(mTextColorPrimary);
+        proxyTextCol.addView(tvProxyLabel);
+
+        TextView tvProxyHint = new TextView(this);
+        tvProxyHint.setText("若手机直连受限，可指定本地代理（如 http://127.0.0.1:7890，留空则走系统网络）");
+        tvProxyHint.setTextSize(12);
+        tvProxyHint.setTextColor(mTextColorSecondary);
+        proxyTextCol.addView(tvProxyHint);
+        proxyHeaderRow.addView(proxyTextCol);
+        openAiLayout.addView(proxyHeaderRow);
+
+        mTvOpenAiProxy = new TextView(this);
+        mTvOpenAiProxy.setTextSize(13);
+        mTvOpenAiProxy.setTypeface(Typeface.MONOSPACE);
+        mTvOpenAiProxy.setTextColor(0xFF009688);
+        mTvOpenAiProxy.setBackgroundColor(0x15009688);
+        mTvOpenAiProxy.setPadding((int) (12 * density), (int) (8 * density), (int) (12 * density), (int) (8 * density));
+        LinearLayout.LayoutParams lpProxy = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lpProxy.topMargin = (int) (6 * density);
+        lpProxy.bottomMargin = (int) (6 * density);
+        mTvOpenAiProxy.setLayoutParams(lpProxy);
+        mTvOpenAiProxy.setOnClickListener(v -> showEditOpenAiProxyDialog());
+        openAiLayout.addView(mTvOpenAiProxy);
+
+        LinearLayout proxyBtnRow = new LinearLayout(this);
+        proxyBtnRow.setOrientation(LinearLayout.HORIZONTAL);
+        proxyBtnRow.setGravity(Gravity.END);
+
+        MaterialButton btnEditProxy = new MaterialButton(this);
+        btnEditProxy.setText("配置代理");
+        btnEditProxy.setTextSize(11);
+        btnEditProxy.setOnClickListener(v -> showEditOpenAiProxyDialog());
+        proxyBtnRow.addView(btnEditProxy);
+
+        View spacerProxyBtn = new View(this);
+        spacerProxyBtn.setLayoutParams(new LinearLayout.LayoutParams((int) (8 * density), 1));
+        proxyBtnRow.addView(spacerProxyBtn);
+
+        MaterialButton btnClearProxy = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        btnClearProxy.setText("清空代理");
+        btnClearProxy.setTextSize(11);
+        btnClearProxy.setOnClickListener(v -> {
+            OpenAiTunnelManager.getInstance().setProxy(this, "");
+            refreshUI();
+            Toast.makeText(this, "已清除前置代理（将使用直连）", Toast.LENGTH_SHORT).show();
+        });
+        proxyBtnRow.addView(btnClearProxy);
+        openAiLayout.addView(proxyBtnRow);
+
+        addDivider(openAiLayout, density);
+
+        // 底部运维按钮（查看日志 + 配置指引）
+        LinearLayout bottomOpsRow = new LinearLayout(this);
+        bottomOpsRow.setOrientation(LinearLayout.HORIZONTAL);
+        bottomOpsRow.setGravity(Gravity.CENTER_VERTICAL);
+        bottomOpsRow.setPadding(0, (int) (4 * density), 0, 0);
+
+        MaterialButton btnShowLogs = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        btnShowLogs.setText("查看隧道实时日志");
+        btnShowLogs.setTextSize(11);
+        btnShowLogs.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
+        btnShowLogs.setOnClickListener(v -> showTunnelLogsDialog());
+        bottomOpsRow.addView(btnShowLogs);
+
+        View spacerOps = new View(this);
+        spacerOps.setLayoutParams(new LinearLayout.LayoutParams((int) (8 * density), 1));
+        bottomOpsRow.addView(spacerOps);
+
+        MaterialButton btnHelp = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        btnHelp.setText("获取配置指引");
+        btnHelp.setTextSize(11);
+        btnHelp.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
+        btnHelp.setOnClickListener(v -> showOpenAiTunnelHelpDialog());
+        bottomOpsRow.addView(btnHelp);
+
+        openAiLayout.addView(bottomOpsRow);
+
+        cardOpenAi.addView(openAiLayout);
+        content.addView(cardOpenAi);
+
+        // ────────────────────────────
+        // 卡片 5：MCP 工具能力与权限管理
         // ────────────────────────────
         MaterialCardView cardTools = createCard(density);
         LinearLayout toolsLayout = createCardContent(density);
@@ -753,6 +986,34 @@ public class TermuxMcpActivity extends AppCompatActivity {
         bindToolSwitch(mSwitchToolUrl, TermuxMcpManager.PREF_KEY_TOOL_OPEN_URL, "浏览器打开网页");
         bindToolSwitch(mSwitchToolDownload, TermuxMcpManager.PREF_KEY_TOOL_DOWNLOAD, "高速网络下载");
 
+        // 绑定 OpenAI 官方原生安全隧道开关
+        mSwitchOpenAiTunnel.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (buttonView.isPressed()) {
+                OpenAiTunnelManager manager = OpenAiTunnelManager.getInstance();
+                manager.setEnabled(this, isChecked);
+                if (isChecked) {
+                    if (!TermuxMcpManager.getInstance().isServerRunning()) {
+                        TermuxMcpManager.getInstance().startServer(this);
+                    }
+                    boolean ok = manager.startTunnel(this);
+                    if (!ok) {
+                        mSwitchOpenAiTunnel.setChecked(false);
+                        Toast.makeText(this, "启动失败: " + manager.getLastError(), Toast.LENGTH_LONG).show();
+                    } else {
+                        Toast.makeText(this, "已启动 OpenAI 官方隧道，正在建立出站长连接...", Toast.LENGTH_SHORT).show();
+                    }
+                } else {
+                    manager.stopTunnel();
+                    Toast.makeText(this, "OpenAI 官方隧道已停止", Toast.LENGTH_SHORT).show();
+                }
+                refreshUI();
+            }
+        });
+
+        OpenAiTunnelManager.getInstance().setStateListener((state, lastError) -> {
+            refreshUI();
+        });
+
         refreshUI();
     }
 
@@ -821,6 +1082,43 @@ public class TermuxMcpActivity extends AppCompatActivity {
         mSwitchToolFeedback.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_FEEDBACK));
         mSwitchToolUrl.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_OPEN_URL));
         mSwitchToolDownload.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_DOWNLOAD));
+
+        // 同步 OpenAI 官方原生安全隧道状态
+        OpenAiTunnelManager openAiMgr = OpenAiTunnelManager.getInstance();
+        boolean openAiRunning = openAiMgr.isRunning();
+        mSwitchOpenAiTunnel.setChecked(openAiRunning);
+
+        OpenAiTunnelManager.TunnelState state = openAiMgr.getState();
+        if (openAiRunning) {
+            if (state == OpenAiTunnelManager.TunnelState.CONNECTED) {
+                mTvOpenAiStatus.setText("🟢 状态：" + state.getDesc());
+                mTvOpenAiStatus.setTextColor(0xFF2E7D32);
+            } else {
+                mTvOpenAiStatus.setText("🟡 状态：" + state.getDesc());
+                mTvOpenAiStatus.setTextColor(0xFFF57F17);
+            }
+        } else {
+            if (state == OpenAiTunnelManager.TunnelState.ERROR) {
+                mTvOpenAiStatus.setText("🔴 异常：" + openAiMgr.getLastError());
+                mTvOpenAiStatus.setTextColor(0xFFC62828);
+            } else {
+                mTvOpenAiStatus.setText("⚪ 状态：未运行");
+                mTvOpenAiStatus.setTextColor(mTextColorSecondary);
+            }
+        }
+
+        String tid = openAiMgr.getTunnelId(this);
+        mTvOpenAiTunnelId.setText(tid.isEmpty() ? "（未配置 · 点击下方按钮配置）" : tid);
+
+        String apiKey = openAiMgr.getApiKey(this);
+        if (apiKey.isEmpty()) {
+            mTvOpenAiApiKey.setText("（未配置 · 点击下方按钮配置）");
+        } else {
+            mTvOpenAiApiKey.setText(apiKey.length() > 8 ? (apiKey.substring(0, 4) + "••••••••" + apiKey.substring(apiKey.length() - 4)) : "••••••••");
+        }
+
+        String proxy = openAiMgr.getProxy(this);
+        mTvOpenAiProxy.setText(proxy.isEmpty() ? "（未配置 · 默认直接走系统网络）" : proxy);
     }
 
     private void showEditPublicHostDialog() {
@@ -848,6 +1146,103 @@ public class TermuxMcpActivity extends AppCompatActivity {
                 Toast.makeText(this, "公网域名已保存！已自动联动全部配置清单与端点。", Toast.LENGTH_SHORT).show();
             })
             .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showEditOpenAiTunnelIdDialog() {
+        OpenAiTunnelManager manager = OpenAiTunnelManager.getInstance();
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+        input.setText(manager.getTunnelId(this));
+        input.setHint("如: tunnel_01j7... 或从平台复制的 ID");
+        input.setSelectAllOnFocus(true);
+
+        new AlertDialog.Builder(this)
+            .setTitle("配置 OpenAI Tunnel ID")
+            .setMessage("请输入在 OpenAI Platform (platform.openai.com) 创建的 Tunnel ID：")
+            .setView(input)
+            .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                String val = input.getText().toString().trim();
+                manager.setTunnelId(this, val);
+                refreshUI();
+                Toast.makeText(this, "已保存 Tunnel ID", Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showEditOpenAiApiKeyDialog() {
+        OpenAiTunnelManager manager = OpenAiTunnelManager.getInstance();
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        input.setText(manager.getApiKey(this));
+        input.setHint("如: sec_... (需具备 Tunnels Read+Use 权限)");
+        input.setSelectAllOnFocus(true);
+
+        new AlertDialog.Builder(this)
+            .setTitle("配置 OpenAI Runtime API Key")
+            .setMessage("请输入用于该隧道的 OpenAI 运行时 API Key：")
+            .setView(input)
+            .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                String val = input.getText().toString().trim();
+                manager.setApiKey(this, val);
+                refreshUI();
+                Toast.makeText(this, "已保存 Runtime API Key", Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showEditOpenAiProxyDialog() {
+        OpenAiTunnelManager manager = OpenAiTunnelManager.getInstance();
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        String curr = manager.getProxy(this);
+        input.setText(curr.isEmpty() ? "http://127.0.0.1:7890" : curr);
+        input.setHint("如: http://127.0.0.1:7890");
+        input.setSelectAllOnFocus(true);
+
+        new AlertDialog.Builder(this)
+            .setTitle("配置出站前置代理 (科学上网)")
+            .setMessage("若手机直连 OpenAI 服务器受限，可填入本地代理端口（如 Clash/V2Ray 提供的 HTTP 代理地址）：")
+            .setView(input)
+            .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                String val = input.getText().toString().trim();
+                manager.setProxy(this, val);
+                refreshUI();
+                Toast.makeText(this, "已保存前置代理配置", Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showTunnelLogsDialog() {
+        String logs = OpenAiTunnelManager.getInstance().getRecentLogs();
+        TextView tv = new TextView(this);
+        tv.setText(logs);
+        tv.setTextSize(11);
+        tv.setTypeface(Typeface.MONOSPACE);
+        tv.setPadding(30, 20, 30, 20);
+
+        ScrollView sv = new ScrollView(this);
+        sv.addView(tv);
+
+        new AlertDialog.Builder(this)
+            .setTitle("OpenAI 隧道实时运行日志")
+            .setView(sv)
+            .setPositiveButton("确定", null)
+            .setNeutralButton("刷新", (dialog, which) -> showTunnelLogsDialog())
+            .show();
+    }
+
+    private void showOpenAiTunnelHelpDialog() {
+        new AlertDialog.Builder(this)
+            .setTitle("OpenAI 官方安全隧道配置指南")
+            .setMessage("1. 访问 platform.openai.com/settings/organization/tunnels 创建一条新隧道并复制 Tunnel ID。\n\n" +
+                        "2. 在 platform.openai.com/settings/organization/api-keys 创建一把具有 Tunnels Read + Use 权限的 Runtime API Key。\n\n" +
+                        "3. 将上述两项分别填入本界面的输入框，点击开启开关即可！\n\n" +
+                        "4. 本方案为出站加密专线直连，完全走 OpenAI 官方通道，无任何第三方流量限额，彻底告别 1GB 流量不足问题！")
+            .setPositiveButton("知道了", null)
             .show();
     }
 

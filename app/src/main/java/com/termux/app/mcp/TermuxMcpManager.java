@@ -260,6 +260,9 @@ public class TermuxMcpManager {
             mServer = null;
         }
         releaseWakeLock();
+        try {
+            OpenAiTunnelManager.getInstance().stopTunnel();
+        } catch (Exception ignored) {}
         if (context != null) {
             setEnabled(context, false);
         }
