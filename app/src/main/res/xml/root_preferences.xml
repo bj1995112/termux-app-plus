@@ -7,6 +7,11 @@
         app:fragment="com.termux.app.fragments.settings.TermuxPreferencesFragment"/>
 
     <Preference
+        app:key="termux_styling"
+        app:title="@string/termux_styling_title"
+        app:summary="@string/termux_styling_summary" />
+
+    <Preference
         app:key="termux_api"
         app:title="@string/termux_api_preferences_title"
         app:summary="@string/termux_api_preferences_summary"

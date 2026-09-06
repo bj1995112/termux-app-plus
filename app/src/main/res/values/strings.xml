@@ -237,6 +237,24 @@
 
 
 
+    <!-- Builtin Style Component -->
+    <string name="termux_styling_title">Terminal Style &amp; Theme</string>
+    <string name="termux_styling_summary">Built-in 122 color themes and 38 monospace coding fonts</string>
+    <string name="styling_color_scheme_title">Color Schemes</string>
+    <string name="styling_color_scheme_summary">Select color scheme (Dracula, Gruvbox, Nord, Solarized, etc.)</string>
+    <string name="styling_font_title">Monospace Fonts</string>
+    <string name="styling_font_summary">Select terminal font (JetBrains Mono, Fira Code, Hack, Roboto Mono, etc.)</string>
+    <string name="styling_reset_title">Reset to Default</string>
+    <string name="styling_reset_summary">Restore default Termux font and color scheme</string>
+    <string name="styling_applied">Styling applied successfully</string>
+    <string name="styling_reset_confirm">Reset color scheme and font to default?</string>
+
+    <!-- UI Enhancements -->
+    <string name="quick_actions_header">Quick Actions</string>
+    <string name="action_switch_mirror">Switch Mirror</string>
+    <string name="action_restart_terminal">Restart Environment</string>
+    <string name="sessions_header">Active Sessions</string>
+
     <!-- About Preference -->
     <string name="about_preference_title">About</string>
 

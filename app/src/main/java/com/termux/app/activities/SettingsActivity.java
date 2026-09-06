@@ -63,6 +63,7 @@ public class SettingsActivity extends AppCompatActivity {
             new Thread() {
                 @Override
                 public void run() {
+                    configureStylingPreference(context);
                     configureTermuxAPIPreference(context);
                     configureTermuxFloatPreference(context);
                     configureTermuxTaskerPreference(context);
@@ -71,6 +72,17 @@ public class SettingsActivity extends AppCompatActivity {
                     configureDonatePreference(context);
                 }
             }.start();
+        }
+
+        private void configureStylingPreference(@NonNull Context context) {
+            Preference stylingPreference = findPreference("termux_styling");
+            if (stylingPreference != null) {
+                stylingPreference.setOnPreferenceClickListener(preference -> {
+                    android.content.Intent intent = new android.content.Intent(context, com.termux.app.styling.TermuxStyleActivity.class);
+                    startActivity(intent);
+                    return true;
+                });
+            }
         }
 
         private void configureTermuxAPIPreference(@NonNull Context context) {

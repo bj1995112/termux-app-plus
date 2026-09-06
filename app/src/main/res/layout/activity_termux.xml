@@ -35,7 +35,7 @@
 
             <LinearLayout
                 android:id="@+id/left_drawer"
-                android:layout_width="240dp"
+                android:layout_width="280dp"
                 android:layout_height="match_parent"
                 android:layout_gravity="start"
                 android:choiceMode="singleChoice"
@@ -45,49 +45,135 @@
                 android:orientation="vertical"
                 android:background="?attr/termuxActivityDrawerBackground">
 
+                <!-- Drawer Header -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:paddingHorizontal="16dp"
+                    android:paddingTop="16dp"
+                    android:paddingBottom="12dp"
+                    android:gravity="center_vertical"
                     android:orientation="horizontal">
+
+                    <ImageView
+                        android:layout_width="32dp"
+                        android:layout_height="32dp"
+                        android:src="@drawable/ic_terminal"
+                        app:tint="?attr/termuxActivityDrawerImageTint" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="12dp"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Termux+"
+                            android:textSize="18sp"
+                            android:textStyle="bold"
+                            android:textColor="?attr/termuxActivityDrawerImageTint" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="终端增强版"
+                            android:textSize="11sp"
+                            android:alpha="0.7"
+                            android:textColor="?attr/termuxActivityDrawerImageTint" />
+                    </LinearLayout>
+
+                    <ImageButton
+                        android:id="@+id/style_button"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:src="@drawable/ic_palette"
+                        android:background="?android:attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/action_style_terminal"
+                        app:tint="?attr/termuxActivityDrawerImageTint" />
+
                     <ImageButton
                         android:id="@+id/settings_button"
                         android:layout_width="40dp"
                         android:layout_height="40dp"
                         android:src="@drawable/ic_settings"
-                        android:background="@null"
+                        android:background="?android:attr/selectableItemBackgroundBorderless"
                         android:contentDescription="@string/action_open_settings"
                         app:tint="?attr/termuxActivityDrawerImageTint" />
                 </LinearLayout>
 
+                <!-- Quick Action Button (Switch Mirror) -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/switch_mirror_button"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="38dp"
+                    android:layout_marginHorizontal="12dp"
+                    android:layout_marginBottom="6dp"
+                    android:gravity="start|center_vertical"
+                    android:text="@string/action_switch_mirror"
+                    android:textSize="12sp"
+                    app:icon="@drawable/ic_cloud_sync"
+                    app:iconPadding="8dp"
+                    app:iconSize="18dp" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginHorizontal="16dp"
+                    android:layout_marginBottom="8dp"
+                    android:alpha="0.15"
+                    android:background="?attr/termuxActivityDrawerImageTint" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="16dp"
+                    android:paddingBottom="4dp"
+                    android:text="@string/sessions_header"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:alpha="0.6"
+                    android:textColor="?attr/termuxActivityDrawerImageTint" />
+
+                <!-- Sessions List -->
                 <ListView
                     android:id="@+id/terminal_sessions_list"
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
                     android:layout_gravity="top"
                     android:layout_weight="1"
+                    android:paddingHorizontal="8dp"
+                    android:divider="@android:color/transparent"
+                    android:dividerHeight="4dp"
                     android:choiceMode="singleChoice"
                     android:longClickable="true" />
 
+                <!-- Bottom Button Bar -->
                 <LinearLayout
-                    style="?android:attr/buttonBarStyle"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:padding="8dp"
                     android:orientation="horizontal">
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/toggle_keyboard_button"
-                        style="?android:attr/buttonBarButtonStyle"
-                        android:layout_width="match_parent"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
+                        android:layout_marginEnd="4dp"
                         android:text="@string/action_toggle_soft_keyboard" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/new_session_button"
-                        style="?android:attr/buttonBarButtonStyle"
-                        android:layout_width="match_parent"
+                        style="@style/Widget.MaterialComponents.Button"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
+                        android:layout_marginStart="4dp"
                         android:text="@string/action_new_session" />
                 </LinearLayout>
             </LinearLayout>

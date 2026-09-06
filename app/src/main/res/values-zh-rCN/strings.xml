@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!DOCTYPE resources [
+    <!ENTITY TERMUX_PACKAGE_NAME "com.termux">
+    <!ENTITY TERMUX_APP_NAME "Termux">
+    <!ENTITY TERMUX_API_APP_NAME "Termux:API">
+    <!ENTITY TERMUX_BOOT_APP_NAME "Termux:Boot">
+    <!ENTITY TERMUX_FLOAT_APP_NAME "Termux:Float">
+    <!ENTITY TERMUX_STYLING_APP_NAME "Termux:Styling">
+    <!ENTITY TERMUX_TASKER_APP_NAME "Termux:Tasker">
+    <!ENTITY TERMUX_WIDGET_APP_NAME "Termux:Widget">
+    ]>
+
+<resources>
+
+    <string name="application_name">&TERMUX_APP_NAME;</string>
+    <string name="shared_user_label">&TERMUX_APP_NAME; 用户</string>
+
+    <!-- Termux RUN_COMMAND permission -->
+    <string name="permission_run_command_label">在 &TERMUX_APP_NAME; 环境中执行命令</string>
+    <string name="permission_run_command_description">在 &TERMUX_APP_NAME; 环境中执行任意命令并访问应用内文件</string>
+
+    <!-- Termux Bootstrap Packages Installation -->
+    <string name="bootstrap_installer_body">正在安装基础环境包 (Bootstrap)…</string>
+    <string name="bootstrap_error_title">&TERMUX_APP_NAME; 引导安装错误</string>
+    <string name="bootstrap_error_body">&TERMUX_APP_NAME; 无法成功安装基础环境包。</string>
+    <string name="bootstrap_error_abort">中止</string>
+    <string name="bootstrap_error_try_again">重试</string>
+    <string name="bootstrap_error_apk_bootstrap_variant_min_sdk_incompatible">当前安装的 &TERMUX_APP_NAME; 基础环境变体 %1$s 与设备的 Android 版本 %2$s (SDK %3$d) 不兼容，它要求最低 Android 版本为 %4$s (SDK %5$d)。\n\n请卸载当前应用并重新安装适用的 APK 版本。</string>
+    <string name="bootstrap_error_apk_bootstrap_variant_max_sdk_incompatible">当前安装的 &TERMUX_APP_NAME; 基础环境变体 %1$s 与设备的 Android 版本 %2$s (SDK %3$d) 不兼容，它要求最高 Android 版本为 %4$s (SDK %5$d)。\n\n请卸载当前应用并重新安装适用的 APK 版本。</string>
+    <string name="bootstrap_error_not_primary_user_message">&TERMUX_APP_NAME; 只能作为主用户身份运行。\n为 &TERMUX_APP_NAME; 编译的二进制文件包含硬编码的 $PREFIX 路径，无法安装在除以下路径之外的其他位置：\n%1$s。</string>
+    <string name="bootstrap_error_installed_on_portable_sd">&TERMUX_APP_NAME; 无法安装在外置可移动 SD 卡上。\n为 &TERMUX_APP_NAME; 编译的二进制文件包含硬编码的 $PREFIX 路径，无法安装在除以下路径之外的其他位置：\n%1$s。</string>
+
+    <!-- Terminal Sidebar and Shortcuts -->
+    <string name="action_new_session">新建会话</string>
+    <string name="action_new_session_failsafe">安全模式 (Failsafe)</string>
+    <string name="title_max_terminals_reached">已达到最大终端会话数</string>
+    <string name="msg_max_terminals_reached">请先关闭现有会话再创建新会话。</string>
+
+    <string name="title_rename_session">设置会话名称</string>
+    <string name="action_rename_session_confirm">确定</string>
+    <string name="title_create_named_session">新建命名会话</string>
+    <string name="action_create_named_session_confirm">创建</string>
+
+    <string name="action_toggle_soft_keyboard">软键盘</string>
+
+    <string name="msg_enabling_terminal_toolbar">正在启用终端快捷工具栏</string>
+    <string name="msg_disabling_terminal_toolbar">正在停用终端快捷工具栏</string>
+
+    <!-- Terminal Popup -->
+    <string name="action_select_url">提取链接 (URL)</string>
+    <string name="title_select_url_dialog">点击链接可复制，长按可直接打开</string>
+    <string name="title_select_url_none_found">当前终端屏幕未检测到网址链接。</string>
+    <string name="msg_select_url_copied_to_clipboard">链接已复制到剪贴板</string>
+
+    <string name="action_share_transcript">分享全部输出</string>
+    <string name="title_share_transcript">终端文本记录</string>
+    <string name="title_share_transcript_with">将终端输出发送至：</string>
+
+    <string name="action_share_selected_text">分享选中文本</string>
+    <string name="title_share_selected_text">选中的终端文本</string>
+    <string name="title_share_selected_text_with">将选中文本发送至：</string>
+
+    <string name="action_autofill_username">自动填充用户名</string>
+    <string name="action_autofill_password">自动填充密码</string>
+
+    <string name="action_reset_terminal">重置终端</string>
+    <string name="msg_terminal_reset">终端已重置</string>
+
+    <string name="action_kill_process">终止进程 (%d)</string>
+    <string name="title_confirm_kill_process">确定要强制终止当前会话进程吗？</string>
+
+    <string name="action_style_terminal">样式与主题</string>
+    <string name="action_toggle_keep_screen_on">屏幕常亮</string>
+    <string name="action_open_help">帮助与文档</string>
+    <string name="action_open_settings">设置</string>
+
+    <string name="action_report_issue">反馈问题</string>
+    <string name="msg_generating_report">正在生成诊断报告…</string>
+    <string name="msg_add_termux_debug_info">是否将 Termux 调试信息加入报告？</string>
+
+    <string name="error_styling_not_installed">终端样式组件已内置在应用中。</string>
+    <string name="action_styling_install">打开样式配置</string>
+
+    <!-- Termux Notifications -->
+    <string name="notification_action_exit">退出</string>
+    <string name="notification_action_wake_lock">保持唤醒锁 (Wakelock)</string>
+    <string name="notification_action_wake_unlock">释放唤醒锁</string>
+
+    <!-- TermuxService -->
+    <string name="error_display_over_other_apps_permission_not_granted_to_start_terminal">&TERMUX_APP_NAME; 在 Android 10 或更高版本上需要“悬浮窗/显示在其他应用上层”权限才能在后台启动终端会话。\n请前往系统设置 -> 应用 -> &TERMUX_APP_NAME; -> 高级 授予权限。</string>
+    <string name="error_termux_service_invalid_execution_command_runner">TermuxService 收到无效的命令运行执行器: `%1$s`</string>
+    <string name="error_termux_service_unsupported_execution_command_runner">TermuxService 不支持该命令运行执行器: `%1$s`</string>
+    <string name="error_termux_service_unsupported_execution_command_shell_create_mode">TermuxService 不支持该 Shell 创建模式: `%1$s`</string>
+    <string name="error_termux_service_execution_command_shell_name_unset">未设置 Shell 名称，但传入了 `%1$s` Shell 创建模式</string>
+
+    <!-- Termux RunCommandService -->
+    <string name="error_run_command_service_invalid_intent_action">RunCommandService 收到无效的 Intent Action: `%1$s`</string>
+    <string name="error_run_command_service_invalid_execution_command_runner">RunCommandService 收到无效的命令运行器: `%1$s`</string>
+    <string name="error_run_command_service_mandatory_extra_missing">RunCommandService 缺少必需的附加参数: \"%1$s\"</string>
+    <string name="error_run_command_service_api_help">访问 %1$s 了解有关 RUN_COMMAND Intent 调用的更多信息。</string>
+
+    <!-- Termux File Receiver -->
+    <string name="title_file_received">将文件保存至 ~/downloads/</string>
+    <string name="action_file_received_edit">编辑</string>
+    <string name="action_file_received_open_directory">打开所在目录</string>
+
+    <!-- Miscellaneous -->
+    <string name="error_termux_service_start_failed_general">启动 TermuxService 失败，请检查 logcat 了解异常信息。</string>
+    <string name="error_termux_service_start_failed_bg">由于系统后台限制，无法在应用处于后台时启动 TermuxService。</string>
+
+    <!-- Termux Settings -->
+    <string name="title_activity_termux_settings">&TERMUX_APP_NAME; 设置</string>
+
+    <!-- Termux App Preferences -->
+    <string name="termux_preferences_title">&TERMUX_APP_NAME;</string>
+    <string name="termux_preferences_summary">&TERMUX_APP_NAME; 核心功能偏好设置</string>
+
+        <!-- Debugging Preferences -->
+        <string name="termux_debugging_preferences_title">调试与日志</string>
+        <string name="termux_debugging_preferences_summary">日志记录、崩溃捕获及插件错误通知</string>
+
+            <!-- Logging Category -->
+            <string name="termux_logging_header">日志记录</string>
+
+                <!-- Log Level -->
+                <string name="termux_log_level_title">日志级别</string>
+
+                <!-- Terminal View Key Logging -->
+                <string name="termux_terminal_view_key_logging_enabled_title">终端按键事件日志</string>
+                <string name="termux_terminal_view_key_logging_enabled_off">不会在日志中记录终端按键。（默认）</string>
+                <string name="termux_terminal_view_key_logging_enabled_on">将在 Logcat 中记录按键输入。该模式非常消耗资源，正常情况下请保持关闭。</string>
+
+                <!-- Plugin Error Notifications -->
+                <string name="termux_plugin_error_notifications_enabled_title">插件错误通知</string>
+                <string name="termux_plugin_error_notifications_enabled_off">停用插件错误的弹窗和通知。</string>
+                <string name="termux_plugin_error_notifications_enabled_on">显示插件错误的弹窗和通知。（默认）</string>
+
+                <!-- Crash Report Notifications -->
+                <string name="termux_crash_report_notifications_enabled_title">崩溃报告通知</string>
+                <string name="termux_crash_report_notifications_enabled_off">停用崩溃报告通知。</string>
+                <string name="termux_crash_report_notifications_enabled_on">当发生异常崩溃时显示通知。（默认）</string>
+
+        <!-- Terminal IO Preferences -->
+        <string name="termux_terminal_io_preferences_title">终端输入 / 输出</string>
+        <string name="termux_terminal_io_preferences_summary">软键盘响应与输入设备设置</string>
+
+            <!-- Keyboard Category -->
+            <string name="termux_keyboard_header">键盘设置</string>
+
+                <!-- Soft Keyboard -->
+                <string name="termux_soft_keyboard_enabled_title">启用软键盘</string>
+                <string name="termux_soft_keyboard_enabled_off">软键盘将保持隐藏禁用状态。</string>
+                <string name="termux_soft_keyboard_enabled_on">软键盘正常启用。（默认）</string>
+
+                <!-- Soft Keyboard Only If No Hardware-->
+                <string name="termux_soft_keyboard_enabled_only_if_no_hardware_title">仅在无物理键盘时启用软键盘</string>
+                <string name="termux_soft_keyboard_enabled_only_if_no_hardware_off">连接物理外接键盘时仍允许呼出软键盘。（默认）</string>
+                <string name="termux_soft_keyboard_enabled_only_if_no_hardware_on">仅在未检测到外接物理键盘时才弹出软键盘。</string>
+
+        <!-- Terminal View Preferences -->
+        <string name="termux_terminal_view_preferences_title">终端视图与显示</string>
+        <string name="termux_terminal_view_preferences_summary">边距补偿、字体大小及视效调节</string>
+
+            <!-- View Category -->
+            <string name="termux_terminal_view_view_header">视图排版</string>
+
+                <!-- Terminal View Margin Adjustment -->
+                <string name="termux_terminal_view_terminal_margin_adjustment_title">终端边距自适应调整</string>
+                <string name="termux_terminal_view_terminal_margin_adjustment_off">停用边距自适应调整。</string>
+                <string name="termux_terminal_view_terminal_margin_adjustment_on">启用边距自适应调整。可尝试解决软键盘遮挡 Extra Keys 或终端内容的问题。（默认）</string>
+
+    <!-- Termux:API App Preferences -->
+    <string name="termux_api_preferences_title">&TERMUX_API_APP_NAME;</string>
+    <string name="termux_api_preferences_summary">&TERMUX_API_APP_NAME; 插件偏好设置</string>
+
+    <!-- Termux:Float App Preferences -->
+    <string name="termux_float_preferences_title">&TERMUX_FLOAT_APP_NAME;</string>
+    <string name="termux_float_preferences_summary">&TERMUX_FLOAT_APP_NAME; 浮窗偏好设置</string>
+
+    <!-- Termux:Tasker App Preferences -->
+    <string name="termux_tasker_preferences_title">&TERMUX_TASKER_APP_NAME;</string>
+    <string name="termux_tasker_preferences_summary">&TERMUX_TASKER_APP_NAME; 插件偏好设置</string>
+
+    <!-- Termux:Widget App Preferences -->
+    <string name="termux_widget_preferences_title">&TERMUX_WIDGET_APP_NAME;</string>
+    <string name="termux_widget_preferences_summary">&TERMUX_WIDGET_APP_NAME; 小部件偏好设置</string>
+
+    <!-- Builtin Style Component -->
+    <string name="termux_styling_title">终端样式与美化</string>
+    <string name="termux_styling_summary">内置 122 种调色主题和 38 种开源等宽编程字体</string>
+    <string name="styling_color_scheme_title">调色板主题</string>
+    <string name="styling_color_scheme_summary">选择终端配色方案（如 Dracula, Gruvbox, Nord, Solarized 等）</string>
+    <string name="styling_font_title">终端字体</string>
+    <string name="styling_font_summary">选择等宽字体（如 JetBrains Mono, Fira Code, Hack, Roboto Mono 等）</string>
+    <string name="styling_reset_title">恢复默认样式</string>
+    <string name="styling_reset_summary">还原为原生 Termux 配色与字体</string>
+    <string name="styling_applied">样式已成功应用并生效</string>
+    <string name="styling_reset_confirm">确定将终端配色和字体还原为默认值吗？</string>
+
+    <!-- UI Enhancements -->
+    <string name="quick_actions_header">快捷操作</string>
+    <string name="action_switch_mirror">一键配置国内镜像源</string>
+    <string name="action_restart_terminal">重启终端环境</string>
+    <string name="sessions_header">活跃会话</string>
+
+    <!-- About Preference -->
+    <string name="about_preference_title">关于 Termux+</string>
+
+    <!-- Donate Preference -->
+    <string name="donate_preference_title">捐赠支持</string>
+
+</resources>

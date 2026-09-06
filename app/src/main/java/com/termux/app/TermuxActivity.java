@@ -246,6 +246,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         setTerminalToolbarView(savedInstanceState);
 
         setSettingsButtonView();
+        setStyleButtonView();
+        setSwitchMirrorButtonView();
 
         setNewSessionButtonView();
 
@@ -565,9 +567,33 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     private void setSettingsButtonView() {
         ImageButton settingsButton = findViewById(R.id.settings_button);
-        settingsButton.setOnClickListener(v -> {
-            ActivityUtils.startActivity(this, new Intent(this, SettingsActivity.class));
-        });
+        if (settingsButton != null) {
+            settingsButton.setOnClickListener(v -> {
+                ActivityUtils.startActivity(this, new Intent(this, SettingsActivity.class));
+            });
+        }
+    }
+
+    private void setStyleButtonView() {
+        ImageButton styleButton = findViewById(R.id.style_button);
+        if (styleButton != null) {
+            styleButton.setOnClickListener(v -> showStylingDialog());
+        }
+    }
+
+    private void setSwitchMirrorButtonView() {
+        View switchMirrorButton = findViewById(R.id.switch_mirror_button);
+        if (switchMirrorButton != null) {
+            switchMirrorButton.setOnClickListener(v -> {
+                TerminalSession currentSession = getCurrentSession();
+                if (currentSession != null && currentSession.isRunning()) {
+                    currentSession.write("termux-change-repo\n");
+                    getDrawer().closeDrawers();
+                } else {
+                    showToast(getString(R.string.action_new_session), true);
+                }
+            });
+        }
     }
 
     private void setNewSessionButtonView() {
@@ -735,18 +761,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     private void showStylingDialog() {
-        Intent stylingIntent = new Intent();
-        stylingIntent.setClassName(TermuxConstants.TERMUX_STYLING_PACKAGE_NAME, TermuxConstants.TERMUX_STYLING_APP.TERMUX_STYLING_ACTIVITY_NAME);
-        try {
-            startActivity(stylingIntent);
-        } catch (ActivityNotFoundException | IllegalArgumentException e) {
-            // The startActivity() call is not documented to throw IllegalArgumentException.
-            // However, crash reporting shows that it sometimes does, so catch it here.
-            new AlertDialog.Builder(this).setMessage(getString(R.string.error_styling_not_installed))
-                .setPositiveButton(R.string.action_styling_install,
-                    (dialog, which) -> ActivityUtils.startActivity(this, new Intent(Intent.ACTION_VIEW, Uri.parse(TermuxConstants.TERMUX_STYLING_FDROID_PACKAGE_URL))))
-                .setNegativeButton(android.R.string.cancel, null).show();
-        }
+        Intent stylingIntent = new Intent(this, com.termux.app.styling.TermuxStyleActivity.class);
+        startActivity(stylingIntent);
     }
     private void toggleKeepScreenOn() {
         if (mTerminalView.getKeepScreenOn()) {

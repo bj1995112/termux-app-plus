@@ -260,6 +260,7 @@ final class TermuxInstaller {
 
                     // Recreate env file since termux prefix was wiped earlier
                     TermuxShellEnvironment.writeEnvironmentToFile(activity);
+                    writeCustomChineseMotd();
 
                     activity.runOnUiThread(whenDone);
 
@@ -458,5 +459,24 @@ final class TermuxInstaller {
     }
 
     public static native byte[] getZip();
+
+    private static void writeCustomChineseMotd() {
+        try {
+            File etcDir = new File(TERMUX_PREFIX_DIR_PATH, "etc");
+            if (!etcDir.exists()) etcDir.mkdirs();
+            File motdFile = new File(etcDir, "motd");
+            String customMotd = "\033[1;36m欢迎使用 Termux+ (深度汉化·内置样式增强版)\033[0m\n\n" +
+                "[*] 常用快捷指引：\n" +
+                "  • 国内镜像换源：运行 \033[1;32mtermux-change-repo\033[0m 或点击抽屉侧边栏换源\n" +
+                "  • 搜索/安装软件包：\033[1;33mpkg search <名称>\033[0m / \033[1;33mpkg install <名称>\033[0m\n" +
+                "  • 终端样式与主题：向右滑动滑出侧边栏，点击右上角 \033[1;35m[调色板]\033[0m 图标\n" +
+                "  • 授予存储权限：运行 \033[1;34mtermux-setup-storage\033[0m\n\n";
+            FileOutputStream fos = new FileOutputStream(motdFile);
+            fos.write(customMotd.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            fos.close();
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to write custom motd", e);
+        }
+    }
 
 }
