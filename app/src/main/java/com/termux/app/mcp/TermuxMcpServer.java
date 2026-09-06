@@ -236,7 +236,7 @@ public class TermuxMcpServer {
             boolean isPublicEndpoint = path.equals("/") ||
                 path.equals("/status") ||
                 path.equals("/openapi.json") ||
-                path.equals("/.well-known/oauth-authorization-server") ||
+                path.contains("/.well-known/") ||
                 path.startsWith("/oauth/authorize") ||
                 path.equals("/oauth/token");
 
@@ -248,19 +248,20 @@ public class TermuxMcpServer {
             // 6. 路由分发
             if (path.equals("/mcp")) {
                 // 最新标准 Streamable HTTP 单端点 (2026 MCP 规范)
-                handleMcpPost(body, out);
+                handleMcpPost(body, out, null, path);
             } else if (path.equals("/sse") && "GET".equals(method)) {
                 // 经典 SSE 订阅端点
                 handleSseGet(out, socket);
-            } else if (path.startsWith("/messages") && "POST".equals(method)) {
-                // 经典 SSE 消息端点
-                handleMcpPost(body, out);
+            } else if ((path.startsWith("/messages") || path.equals("/sse")) && "POST".equals(method)) {
+                // 经典 SSE 消息端点或直接 POST 到 /sse (支持 Streamable HTTP / MCP 双模)
+                String sessionId = queryParams.get("sessionId");
+                handleMcpPost(body, out, sessionId, path);
             } else if (path.equals("/openapi.json") && "GET".equals(method)) {
                 // ChatGPT Custom GPTs Actions 专属 Schema
                 handleOpenApiSpec(headers, out);
-            } else if (path.equals("/.well-known/oauth-authorization-server") && "GET".equals(method)) {
-                // OAuth 2.1 RFC 8414 发现端点
-                handleOAuthDiscovery(headers, out);
+            } else if (path.contains("/.well-known/") && "GET".equals(method)) {
+                // OAuth 2.1 RFC 8414 / RFC 9728 发现端点 (支持根路径与 /sse/.well-known/...)
+                handleOAuthDiscovery(path, headers, out);
             } else if (path.equals("/oauth/authorize")) {
                 // OAuth 2.1 网页授权端点
                 handleOAuthAuthorize(method, queryParams, body, out);
@@ -406,9 +407,9 @@ public class TermuxMcpServer {
     }
 
     /**
-     * OAuth 2.1 RFC 8414 授权服务器发现元数据
+     * OAuth 2.1 RFC 8414 / RFC 9728 授权与受保护资源发现元数据
      */
-    private void handleOAuthDiscovery(Map<String, String> headers, OutputStream out) throws IOException {
+    private void handleOAuthDiscovery(String path, Map<String, String> headers, OutputStream out) throws IOException {
         try {
             String host = headers.get("host");
             if (host == null || host.isEmpty()) {
@@ -417,6 +418,18 @@ public class TermuxMcpServer {
             String proto = "https".equalsIgnoreCase(headers.get("x-forwarded-proto")) ? "https" : "http";
             String baseUrl = proto + "://" + host;
 
+            if (path != null && path.contains("oauth-protected-resource")) {
+                // RFC 9728 OAuth 2.0 Protected Resource Metadata
+                JSONObject resMeta = new JSONObject();
+                resMeta.put("resource", baseUrl);
+                resMeta.put("authorization_servers", new JSONArray().put(baseUrl));
+                resMeta.put("scopes_supported", new JSONArray().put("execute").put("read").put("system"));
+                resMeta.put("bearer_methods_supported", new JSONArray().put("header"));
+                sendJsonResponse(out, 200, resMeta.toString(2));
+                return;
+            }
+
+            // RFC 8414 OAuth 2.0 Authorization Server Metadata & OpenID Connect Discovery
             JSONObject meta = new JSONObject();
             meta.put("issuer", baseUrl);
             meta.put("authorization_endpoint", baseUrl + "/oauth/authorize");
@@ -673,9 +686,9 @@ public class TermuxMcpServer {
     }
 
     /**
-     * 处理 MCP JSON-RPC 2.0 请求
+     * 处理 MCP JSON-RPC 2.0 请求（同时支持 Streamable HTTP POST 与 SSE 消息通道）
      */
-    private void handleMcpPost(String body, OutputStream out) throws IOException {
+    private void handleMcpPost(String body, OutputStream out, String sessionId, String path) throws IOException {
         if (body == null || body.trim().isEmpty()) {
             sendJsonResponse(out, 400, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32700,\"message\":\"Parse error: Empty body\"}}");
             return;
@@ -686,36 +699,56 @@ public class TermuxMcpServer {
             String method = req.optString("method", "");
             Object id = req.opt("id");
 
-            JSONObject resp = new JSONObject();
-            resp.put("jsonrpc", "2.0");
-            if (id != null) {
-                resp.put("id", id);
+            // 1. JSON-RPC 2.0 规范：若请求为 Notification（无 id 或以 notifications/ 开头），无需返回 RPC 响应
+            if (id == null || method.startsWith("notifications/")) {
+                sendJsonResponse(out, 202, "{\"status\":\"accepted\"}");
+                return;
             }
 
+            JSONObject resp = new JSONObject();
+            resp.put("jsonrpc", "2.0");
+            resp.put("id", id);
+
             switch (method) {
+                case "server/discover":
                 case "initialize":
                     JSONObject initResult = new JSONObject();
-                    initResult.put("protocolVersion", "2024-11-05");
+                    String clientVersion = "2024-11-05";
+                    if (req.optJSONObject("params") != null) {
+                        JSONObject p = req.optJSONObject("params");
+                        if (p.has("protocolVersion")) {
+                            clientVersion = p.optString("protocolVersion");
+                        } else if (p.has("_meta")) {
+                            JSONObject meta = p.optJSONObject("_meta");
+                            if (meta != null && meta.has("io.modelcontextprotocol/protocolVersion")) {
+                                clientVersion = meta.optString("io.modelcontextprotocol/protocolVersion");
+                            }
+                        }
+                    }
+                    initResult.put("protocolVersion", clientVersion);
+
                     JSONObject capabilities = new JSONObject();
                     JSONObject toolsCap = new JSONObject();
                     toolsCap.put("listChanged", true);
                     capabilities.put("tools", toolsCap);
+                    capabilities.put("resources", new JSONObject());
+                    capabilities.put("prompts", new JSONObject());
+                    capabilities.put("logging", new JSONObject());
                     initResult.put("capabilities", capabilities);
 
                     JSONObject serverInfo = new JSONObject();
                     serverInfo.put("name", "Termux+ Built-in MCP Server");
-                    serverInfo.put("version", "1.0.0");
+                    serverInfo.put("version", "1.1.0");
                     initResult.put("serverInfo", serverInfo);
 
                     resp.put("result", initResult);
                     break;
 
-                case "notifications/initialized":
-                    // 客户端初始化确认，无需应答
+                case "ping":
                     resp.put("result", new JSONObject());
                     break;
 
-                case "ping":
+                case "logging/setLevel":
                     resp.put("result", new JSONObject());
                     break;
 
@@ -735,6 +768,24 @@ public class TermuxMcpServer {
                     resp.put("result", callResult);
                     break;
 
+                case "resources/list":
+                    JSONObject resResult = new JSONObject();
+                    resResult.put("resources", new JSONArray());
+                    resp.put("result", resResult);
+                    break;
+
+                case "resources/templates/list":
+                    JSONObject resTplResult = new JSONObject();
+                    resTplResult.put("resourceTemplates", new JSONArray());
+                    resp.put("result", resTplResult);
+                    break;
+
+                case "prompts/list":
+                    JSONObject promptResult = new JSONObject();
+                    promptResult.put("prompts", new JSONArray());
+                    resp.put("result", promptResult);
+                    break;
+
                 default:
                     JSONObject err = new JSONObject();
                     err.put("code", -32601);
@@ -743,6 +794,44 @@ public class TermuxMcpServer {
                     break;
             }
 
+            // 2. 如果有活跃的 SSE 会话（比如 OpenAI 客户端正在监听 /sse）：
+            //    必须通过 SSE 事件通道下发 JSON-RPC 响应数据：event: message\r\ndata: <JSON>\r\n\r\n
+            boolean sentOverSse = false;
+            if (sessionId != null && mSseSessions.containsKey(sessionId)) {
+                OutputStream sseOut = mSseSessions.get(sessionId);
+                if (sseOut != null) {
+                    try {
+                        synchronized (sseOut) {
+                            String sseMsg = "event: message\r\ndata: " + resp.toString() + "\r\n\r\n";
+                            sseOut.write(sseMsg.getBytes(StandardCharsets.UTF_8));
+                            sseOut.flush();
+                            sentOverSse = true;
+                        }
+                    } catch (Exception e) {
+                        Logger.logError(LOG_TAG, "Error writing to SSE session " + sessionId + ": " + e.getMessage());
+                        mSseSessions.remove(sessionId);
+                    }
+                }
+            }
+
+            if (!sentOverSse && !mSseSessions.isEmpty() && !"/mcp".equals(path)) {
+                for (Map.Entry<String, OutputStream> entry : mSseSessions.entrySet()) {
+                    try {
+                        OutputStream sseOut = entry.getValue();
+                        synchronized (sseOut) {
+                            String sseMsg = "event: message\r\ndata: " + resp.toString() + "\r\n\r\n";
+                            sseOut.write(sseMsg.getBytes(StandardCharsets.UTF_8));
+                            sseOut.flush();
+                            sentOverSse = true;
+                        }
+                    } catch (Exception e) {
+                        mSseSessions.remove(entry.getKey());
+                    }
+                }
+            }
+
+            // 3. 对于当前 HTTP POST 请求连接本身：
+            //    同时也返回 200 OK 附带完整响应 JSON（兼容 Streamable HTTP 客户端与直连解析 POST Body 的客户端）
             sendJsonResponse(out, 200, resp.toString());
 
         } catch (Exception e) {
@@ -774,8 +863,10 @@ public class TermuxMcpServer {
         try {
             while (mRunning && !socket.isClosed()) {
                 Thread.sleep(15000);
-                out.write(": ping\r\n\r\n".getBytes(StandardCharsets.UTF_8));
-                out.flush();
+                synchronized (out) {
+                    out.write(": ping\r\n\r\n".getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                }
             }
         } catch (Exception ignored) {
         } finally {
