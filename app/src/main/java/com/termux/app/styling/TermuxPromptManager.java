@@ -85,7 +85,7 @@ public class TermuxPromptManager {
         new PromptTheme("rpg", "像素复古 RPG (Hero)", "趣味个性", "[LV.99 HERO] ⚔️ ~/workspace ❯ "),
 
         // 原生默认
-        new PromptTheme("default", "原生默认 (不作任何改写)", "原生默认", "（保持系统初始 PS1，不产生覆盖）")
+        new PromptTheme("default", "系统原生 (经典结构 · 色彩联动)", "原生默认", "root@localhost:~$ ")
     );
 
     public static final List<PromptColor> COLORS = Arrays.asList(

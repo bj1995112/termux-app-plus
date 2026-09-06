@@ -29,20 +29,6 @@ __termux_prompt_apply() {
         . "$__conf"
     fi
 
-    if [ "$theme" = "default" ]; then
-        # 原生默认：若有初始备份则恢复，否则恢复为系统原生标准 PS1
-        if [ -n "$__TERMUX_ORIG_PS1" ]; then
-            PS1="$__TERMUX_ORIG_PS1"
-        else
-            if [ -f /etc/debian_version ] || [ -n "$debian_chroot" ]; then
-                PS1='${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
-            else
-                PS1='\[\e[0;32m\]\w\[\e[0m\] \[\e[0;97m\]\$\[\e[0m\] '
-            fi
-        fi
-        export PS1
-        return $__ret
-    fi
 
     # 备份原始 PS1
     if [ -z "$__TERMUX_ORIG_PS1" ]; then
@@ -182,6 +168,14 @@ __termux_prompt_apply() {
         rpg)
             # 像素复古 RPG
             PS1="[LV.99 ${C}HERO${R}] ⚔️ ${B}\W${R} ❯ "
+            ;;
+        default)
+            # 系统默认经典结构 + 用户自选色彩高亮联动
+            if [ -f /etc/debian_version ] || [ -n "$debian_chroot" ]; then
+                PS1="${debian_chroot:+($debian_chroot)}${C}\u@\h${R}:${C}${B}\w${R}\$ "
+            else
+                PS1="${C}\w${R} \$ "
+            fi
             ;;
         *)
             PS1="${C}┌──[${B}\w${R}${C}]\n${C}└──${R} ${STAT_SYM} "

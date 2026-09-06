@@ -7,7 +7,9 @@ import android.view.Gravity;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.util.TypedValue;
 import android.widget.BaseAdapter;
+import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
@@ -131,20 +133,17 @@ public class TermuxStyleActivity extends AppCompatActivity {
         TermuxPromptManager.PromptColor color = TermuxPromptManager.getColorById(curColorId);
 
         if (mCurrentPromptText != null) {
-            if ("default".equalsIgnoreCase(curThemeId)) {
-                mCurrentPromptText.setText("原生默认 · 保持系统初始状态");
-            } else {
-                mCurrentPromptText.setText(theme.displayName + " · " + color.displayName);
-            }
+            mCurrentPromptText.setText(theme.displayName + " · " + color.displayName);
         }
 
         if (mPreviewTerminalText != null) {
+            String promptSim;
             if ("default".equalsIgnoreCase(curThemeId)) {
-                mPreviewTerminalText.setText("$ cat README.md\n[+] Termux+ 终端增强版就绪\n$ ");
+                promptSim = "root@localhost:~$ ";
             } else {
-                String promptSim = theme.previewText;
-                mPreviewTerminalText.setText(promptSim + "cat README.md\n[+] Termux+ 终端增强版就绪\n" + promptSim);
+                promptSim = theme.previewText;
             }
+            mPreviewTerminalText.setText(promptSim + "cat README.md\n[+] Termux+ 终端增强版就绪\n" + promptSim);
         }
     }
 
@@ -153,19 +152,33 @@ public class TermuxStyleActivity extends AppCompatActivity {
         Set<String> favColors = TermuxStyleManager.getFavoriteColors(this);
         TermuxStyleManager.sortItemsWithFavorites(mColorSchemes, favColors);
 
+        // 动态读取系统主题颜色，确保在日间模式（白底）与夜间模式（深底）下均拥有最佳对比度
+        TypedValue tvPrimary = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.textColorPrimary, tvPrimary, true);
+        final int textColorPrimary = tvPrimary.data != 0 ? tvPrimary.data : 0xFF212121;
+
+        TypedValue tvSecondary = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.textColorSecondary, tvSecondary, true);
+        final int textColorSecondary = tvSecondary.data != 0 ? tvSecondary.data : 0xFF757575;
+
+        TypedValue tvRipple = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, tvRipple, true);
+        final int rippleResId = tvRipple.resourceId;
+
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
 
         TextView hint = new TextView(this);
         hint.setText("💡 点击直接应用，点击星号 ★ 收藏并置顶常用主题");
-        hint.setTextSize(11);
-        hint.setTextColor(0xFF9E9E9E);
-        hint.setPadding((int) (16 * density), (int) (8 * density), (int) (16 * density), (int) (6 * density));
+        hint.setTextSize(12);
+        hint.setTextColor(textColorSecondary);
+        hint.setPadding((int) (16 * density), (int) (10 * density), (int) (16 * density), (int) (6 * density));
         content.addView(hint);
 
         ListView listView = new ListView(this);
         listView.setDividerHeight(1);
-        listView.setFastScrollEnabled(true);
+        // 关键：禁用 fastScrollEnabled，杜绝右侧滑块区域拦截并吞噬收藏星号的点击事件
+        listView.setFastScrollEnabled(false);
         LinearLayout.LayoutParams lpList = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         );
@@ -198,32 +211,52 @@ public class TermuxStyleActivity extends AppCompatActivity {
             public View getView(int position, View convertView, ViewGroup parent) {
                 LinearLayout row;
                 TextView tvName;
+                FrameLayout starContainer;
                 TextView tvStar;
 
                 if (convertView == null) {
                     row = new LinearLayout(TermuxStyleActivity.this);
                     row.setOrientation(LinearLayout.HORIZONTAL);
                     row.setGravity(Gravity.CENTER_VERTICAL);
-                    row.setPadding((int) (16 * density), (int) (10 * density), (int) (12 * density), (int) (10 * density));
-                    row.setBackgroundResource(android.R.drawable.list_selector_background);
+                    row.setPadding((int) (16 * density), 0, (int) (4 * density), 0);
+                    if (rippleResId != 0) {
+                        row.setBackgroundResource(rippleResId);
+                    } else {
+                        row.setBackgroundResource(android.R.drawable.list_selector_background);
+                    }
 
                     tvName = new TextView(TermuxStyleActivity.this);
-                    tvName.setTextSize(13);
+                    tvName.setTextSize(14);
                     LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
                     tvName.setLayoutParams(lp);
                     row.addView(tvName);
 
-                    tvStar = new TextView(TermuxStyleActivity.this);
-                    tvStar.setTextSize(18);
-                    tvStar.setPadding((int) (10 * density), (int) (4 * density), (int) (10 * density), (int) (4 * density));
-                    row.addView(tvStar);
+                    // 独立的大面积触摸容器（48dp x 48dp 黄金触摸区，保证点击 100% 灵敏接收）
+                    starContainer = new FrameLayout(TermuxStyleActivity.this);
+                    LinearLayout.LayoutParams lpStar = new LinearLayout.LayoutParams(
+                        (int) (48 * density), (int) (48 * density)
+                    );
+                    starContainer.setLayoutParams(lpStar);
+                    if (rippleResId != 0) {
+                        starContainer.setBackgroundResource(rippleResId);
+                    }
 
-                    row.setTag(new View[]{tvName, tvStar});
+                    tvStar = new TextView(TermuxStyleActivity.this);
+                    tvStar.setTextSize(20);
+                    FrameLayout.LayoutParams fpStar = new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER
+                    );
+                    tvStar.setLayoutParams(fpStar);
+                    starContainer.addView(tvStar);
+                    row.addView(starContainer);
+
+                    row.setTag(new View[]{tvName, starContainer, tvStar});
                 } else {
                     row = (LinearLayout) convertView;
                     View[] holder = (View[]) row.getTag();
                     tvName = (TextView) holder[0];
-                    tvStar = (TextView) holder[1];
+                    starContainer = (FrameLayout) holder[1];
+                    tvStar = (TextView) holder[2];
                 }
 
                 TermuxStyleManager.StyleItem item = getItem(position);
@@ -232,21 +265,21 @@ public class TermuxStyleActivity extends AppCompatActivity {
 
                 if (isFav) {
                     tvName.setText("★ " + item.displayName);
-                    tvName.setTextColor(0xFFFFD54F); // 金黄色
+                    tvName.setTextColor(0xFFFFA000); // 鲜亮琥珀金，无论深色还是浅色背景均极致清晰
                     tvStar.setText("★");
-                    tvStar.setTextColor(0xFFFFD54F);
+                    tvStar.setTextColor(0xFFFFA000);
                 } else {
                     tvName.setText(item.displayName);
-                    tvName.setTextColor(0xFFE0E0E0);
+                    tvName.setTextColor(textColorPrimary); // 跟随系统主题，白天为深黑灰，夜晚为纯白，对比度极高
                     tvStar.setText(isDefault ? "" : "☆");
-                    tvStar.setTextColor(0xFF757575);
+                    tvStar.setTextColor(textColorSecondary);
                 }
 
                 if (isDefault) {
-                    tvStar.setVisibility(View.GONE);
+                    starContainer.setVisibility(View.GONE);
                 } else {
-                    tvStar.setVisibility(View.VISIBLE);
-                    tvStar.setOnClickListener(v -> {
+                    starContainer.setVisibility(View.VISIBLE);
+                    starContainer.setOnClickListener(v -> {
                         boolean nowFav = TermuxStyleManager.toggleFavoriteColor(TermuxStyleActivity.this, item.fileName);
                         Set<String> updatedFavs = TermuxStyleManager.getFavoriteColors(TermuxStyleActivity.this);
                         TermuxStyleManager.sortItemsWithFavorites(mColorSchemes, updatedFavs);
@@ -278,19 +311,33 @@ public class TermuxStyleActivity extends AppCompatActivity {
         Set<String> favFonts = TermuxStyleManager.getFavoriteFonts(this);
         TermuxStyleManager.sortItemsWithFavorites(mFonts, favFonts);
 
+        // 动态读取系统主题颜色，确保在日间模式（白底）与夜间模式（深底）下均拥有最佳对比度
+        TypedValue tvPrimary = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.textColorPrimary, tvPrimary, true);
+        final int textColorPrimary = tvPrimary.data != 0 ? tvPrimary.data : 0xFF212121;
+
+        TypedValue tvSecondary = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.textColorSecondary, tvSecondary, true);
+        final int textColorSecondary = tvSecondary.data != 0 ? tvSecondary.data : 0xFF757575;
+
+        TypedValue tvRipple = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, tvRipple, true);
+        final int rippleResId = tvRipple.resourceId;
+
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
 
         TextView hint = new TextView(this);
         hint.setText("💡 点击直接应用，点击星号 ★ 收藏并置顶常用字体");
-        hint.setTextSize(11);
-        hint.setTextColor(0xFF9E9E9E);
-        hint.setPadding((int) (16 * density), (int) (8 * density), (int) (16 * density), (int) (6 * density));
+        hint.setTextSize(12);
+        hint.setTextColor(textColorSecondary);
+        hint.setPadding((int) (16 * density), (int) (10 * density), (int) (16 * density), (int) (6 * density));
         content.addView(hint);
 
         ListView listView = new ListView(this);
         listView.setDividerHeight(1);
-        listView.setFastScrollEnabled(true);
+        // 关键：禁用 fastScrollEnabled，杜绝右侧滑块区域拦截并吞噬收藏星号的点击事件
+        listView.setFastScrollEnabled(false);
         LinearLayout.LayoutParams lpList = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         );
@@ -323,32 +370,52 @@ public class TermuxStyleActivity extends AppCompatActivity {
             public View getView(int position, View convertView, ViewGroup parent) {
                 LinearLayout row;
                 TextView tvName;
+                FrameLayout starContainer;
                 TextView tvStar;
 
                 if (convertView == null) {
                     row = new LinearLayout(TermuxStyleActivity.this);
                     row.setOrientation(LinearLayout.HORIZONTAL);
                     row.setGravity(Gravity.CENTER_VERTICAL);
-                    row.setPadding((int) (16 * density), (int) (10 * density), (int) (12 * density), (int) (10 * density));
-                    row.setBackgroundResource(android.R.drawable.list_selector_background);
+                    row.setPadding((int) (16 * density), 0, (int) (4 * density), 0);
+                    if (rippleResId != 0) {
+                        row.setBackgroundResource(rippleResId);
+                    } else {
+                        row.setBackgroundResource(android.R.drawable.list_selector_background);
+                    }
 
                     tvName = new TextView(TermuxStyleActivity.this);
-                    tvName.setTextSize(13);
+                    tvName.setTextSize(14);
                     LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
                     tvName.setLayoutParams(lp);
                     row.addView(tvName);
 
-                    tvStar = new TextView(TermuxStyleActivity.this);
-                    tvStar.setTextSize(18);
-                    tvStar.setPadding((int) (10 * density), (int) (4 * density), (int) (10 * density), (int) (4 * density));
-                    row.addView(tvStar);
+                    // 独立的大面积触摸容器（48dp x 48dp 黄金触摸区，保证点击 100% 灵敏接收）
+                    starContainer = new FrameLayout(TermuxStyleActivity.this);
+                    LinearLayout.LayoutParams lpStar = new LinearLayout.LayoutParams(
+                        (int) (48 * density), (int) (48 * density)
+                    );
+                    starContainer.setLayoutParams(lpStar);
+                    if (rippleResId != 0) {
+                        starContainer.setBackgroundResource(rippleResId);
+                    }
 
-                    row.setTag(new View[]{tvName, tvStar});
+                    tvStar = new TextView(TermuxStyleActivity.this);
+                    tvStar.setTextSize(20);
+                    FrameLayout.LayoutParams fpStar = new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER
+                    );
+                    tvStar.setLayoutParams(fpStar);
+                    starContainer.addView(tvStar);
+                    row.addView(starContainer);
+
+                    row.setTag(new View[]{tvName, starContainer, tvStar});
                 } else {
                     row = (LinearLayout) convertView;
                     View[] holder = (View[]) row.getTag();
                     tvName = (TextView) holder[0];
-                    tvStar = (TextView) holder[1];
+                    starContainer = (FrameLayout) holder[1];
+                    tvStar = (TextView) holder[2];
                 }
 
                 TermuxStyleManager.StyleItem item = getItem(position);
@@ -357,21 +424,21 @@ public class TermuxStyleActivity extends AppCompatActivity {
 
                 if (isFav) {
                     tvName.setText("★ " + item.displayName);
-                    tvName.setTextColor(0xFFFFD54F); // 金黄色
+                    tvName.setTextColor(0xFFFFA000); // 鲜亮琥珀金，无论深色还是浅色背景均极致清晰
                     tvStar.setText("★");
-                    tvStar.setTextColor(0xFFFFD54F);
+                    tvStar.setTextColor(0xFFFFA000);
                 } else {
                     tvName.setText(item.displayName);
-                    tvName.setTextColor(0xFFE0E0E0);
+                    tvName.setTextColor(textColorPrimary); // 跟随系统主题，白天为深黑灰，夜晚为纯白，对比度极高
                     tvStar.setText(isDefault ? "" : "☆");
-                    tvStar.setTextColor(0xFF757575);
+                    tvStar.setTextColor(textColorSecondary);
                 }
 
                 if (isDefault) {
-                    tvStar.setVisibility(View.GONE);
+                    starContainer.setVisibility(View.GONE);
                 } else {
-                    tvStar.setVisibility(View.VISIBLE);
-                    tvStar.setOnClickListener(v -> {
+                    starContainer.setVisibility(View.VISIBLE);
+                    starContainer.setOnClickListener(v -> {
                         boolean nowFav = TermuxStyleManager.toggleFavoriteFont(TermuxStyleActivity.this, item.fileName);
                         Set<String> updatedFavs = TermuxStyleManager.getFavoriteFonts(TermuxStyleActivity.this);
                         TermuxStyleManager.sortItemsWithFavorites(mFonts, updatedFavs);
@@ -415,6 +482,14 @@ public class TermuxStyleActivity extends AppCompatActivity {
             TermuxPromptManager.getColorById(initColorId)
         };
 
+        TypedValue tvPrimary = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.textColorPrimary, tvPrimary, true);
+        final int textColorPrimary = tvPrimary.data != 0 ? tvPrimary.data : 0xFF212121;
+
+        TypedValue tvSecondary = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.textColorSecondary, tvSecondary, true);
+        final int textColorSecondary = tvSecondary.data != 0 ? tvSecondary.data : 0xFF757575;
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding((int) (12 * density), (int) (8 * density), (int) (12 * density), (int) (8 * density));
@@ -423,7 +498,7 @@ public class TermuxStyleActivity extends AppCompatActivity {
         TextView colorTitle = new TextView(this);
         colorTitle.setText("🎨 搭配主打色 (点击即时变色)：");
         colorTitle.setTextSize(12);
-        colorTitle.setTextColor(0xFFB0B0B0);
+        colorTitle.setTextColor(textColorSecondary);
         colorTitle.setPadding(0, 0, 0, (int) (4 * density));
         root.addView(colorTitle);
 
@@ -439,7 +514,7 @@ public class TermuxStyleActivity extends AppCompatActivity {
         TextView catTitle = new TextView(this);
         catTitle.setText("⚡ 选择风格 (共 " + allThemes.size() + " 款)：");
         catTitle.setTextSize(12);
-        catTitle.setTextColor(0xFFB0B0B0);
+        catTitle.setTextColor(textColorSecondary);
         catTitle.setPadding(0, (int) (8 * density), 0, (int) (4 * density));
         root.addView(catTitle);
 
@@ -509,7 +584,7 @@ public class TermuxStyleActivity extends AppCompatActivity {
                     TextView tvName = new TextView(TermuxStyleActivity.this);
                     tvName.setTextSize(14);
                     tvName.setTypeface(null, Typeface.BOLD);
-                    tvName.setTextColor(0xFFE0E0E0);
+                    tvName.setTextColor(textColorPrimary);
                     LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
                     tvName.setLayoutParams(np);
 
@@ -574,9 +649,10 @@ public class TermuxStyleActivity extends AppCompatActivity {
             boolean isCurrent = c.id.equalsIgnoreCase(currentColorHolder[0].id);
             if (isCurrent) {
                 btn.setStrokeWidth((int) (2 * density));
-                btn.setStrokeColorResource(android.R.color.white);
+                btn.setStrokeColor(android.content.res.ColorStateList.valueOf(c.colorInt));
             } else {
                 btn.setStrokeWidth((int) (1 * density));
+                btn.setStrokeColor(android.content.res.ColorStateList.valueOf(textColorSecondary));
             }
 
             LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(
@@ -590,8 +666,10 @@ public class TermuxStyleActivity extends AppCompatActivity {
                 currentColorHolder[0] = c;
                 for (MaterialButton other : colorButtons) {
                     other.setStrokeWidth((int) (1 * density));
+                    other.setStrokeColor(android.content.res.ColorStateList.valueOf(textColorSecondary));
                 }
                 btn.setStrokeWidth((int) (2 * density));
+                btn.setStrokeColor(android.content.res.ColorStateList.valueOf(c.colorInt));
                 // 实时联动刷新下方列表的所有预览颜色！
                 adapter.notifyDataSetChanged();
             });
@@ -647,11 +725,7 @@ public class TermuxStyleActivity extends AppCompatActivity {
         if (success) {
             updateCurrentState();
             TermuxStyleManager.sNeedReloadStyle = true;
-            if ("default".equalsIgnoreCase(theme.id)) {
-                Toast.makeText(this, "已恢复系统初始命令行样式", Toast.LENGTH_SHORT).show();
-            } else {
-                Toast.makeText(this, "已动态应用：" + theme.displayName + " · " + color.displayName + "（一步到位）", Toast.LENGTH_SHORT).show();
-            }
+            Toast.makeText(this, "已动态应用：" + theme.displayName + " · " + color.displayName + "（一步到位）", Toast.LENGTH_SHORT).show();
         }
     }
 
