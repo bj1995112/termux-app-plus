@@ -120,6 +120,12 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         runStartForeground();
 
         SystemEventReceiver.registerPackageUpdateEvents(this);
+
+        // 若用户配置了自启或开启状态，自动拉起 MCP 远程协同服务
+        if (com.termux.app.mcp.TermuxMcpManager.getInstance().isAutoStartEnabled(this) ||
+            com.termux.app.mcp.TermuxMcpManager.getInstance().isEnabled(this)) {
+            com.termux.app.mcp.TermuxMcpManager.getInstance().startServer(this);
+        }
     }
 
     @SuppressLint("Wakelock")
@@ -168,6 +174,8 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     @Override
     public void onDestroy() {
         Logger.logVerbose(LOG_TAG, "onDestroy");
+
+        com.termux.app.mcp.TermuxMcpManager.getInstance().stopServer(null);
 
         TermuxShellUtils.clearTermuxTMPDIR(true);
 

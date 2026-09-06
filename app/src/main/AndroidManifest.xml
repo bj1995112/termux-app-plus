@@ -112,6 +112,13 @@
             android:theme="@style/Theme.TermuxApp.DayNight.NoActionBar" />
 
         <activity
+            android:name=".app.mcp.TermuxMcpActivity"
+            android:exported="true"
+            android:label="AI 远程协同与 MCP 服务"
+            android:parentActivityName=".app.activities.SettingsActivity"
+            android:theme="@style/Theme.TermuxApp.DayNight.NoActionBar" />
+
+        <activity
             android:name=".shared.activities.ReportActivity"
             android:theme="@style/Theme.MarkdownViewActivity.DayNight"
             android:documentLaunchMode="intoExisting" />

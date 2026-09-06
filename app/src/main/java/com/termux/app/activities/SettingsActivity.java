@@ -64,6 +64,7 @@ public class SettingsActivity extends AppCompatActivity {
                 @Override
                 public void run() {
                     configureStylingPreference(context);
+                    configureMcpPreference(context);
                     configureTermuxAPIPreference(context);
                     configureTermuxFloatPreference(context);
                     configureTermuxTaskerPreference(context);
@@ -79,6 +80,17 @@ public class SettingsActivity extends AppCompatActivity {
             if (stylingPreference != null) {
                 stylingPreference.setOnPreferenceClickListener(preference -> {
                     android.content.Intent intent = new android.content.Intent(context, com.termux.app.styling.TermuxStyleActivity.class);
+                    startActivity(intent);
+                    return true;
+                });
+            }
+        }
+
+        private void configureMcpPreference(@NonNull Context context) {
+            Preference mcpPreference = findPreference("termux_mcp");
+            if (mcpPreference != null) {
+                mcpPreference.setOnPreferenceClickListener(preference -> {
+                    android.content.Intent intent = new android.content.Intent(context, com.termux.app.mcp.TermuxMcpActivity.class);
                     startActivity(intent);
                     return true;
                 });

@@ -12,6 +12,11 @@
         app:summary="@string/termux_styling_summary" />
 
     <Preference
+        app:key="termux_mcp"
+        app:title="AI 远程协同与 MCP 服务"
+        app:summary="支持 Cursor、Claude Desktop 及 ChatGPT 远程连接执行命令" />
+
+    <Preference
         app:key="termux_api"
         app:title="@string/termux_api_preferences_title"
         app:summary="@string/termux_api_preferences_summary"
