@@ -8,6 +8,7 @@ import com.termux.terminal.TerminalSession;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -15,155 +16,165 @@ import java.util.Set;
 
 public class UbuntuAppManager {
 
-    private static final String UBUNTU_ROOTFS_PATH = "/data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs/ubuntu";
+    private static final String ROOTFS_BASE_PATH = "/data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs";
+    private static String sDefaultDistroName = "ubuntu";
 
     public static class AppItem {
         public final String id;
         public final String displayName;
         public final String command;
+        public final String distroName; // null 表示 Termux 本地
 
-        public AppItem(String id, String displayName, String command) {
+        public AppItem(String id, String displayName, String command, String distroName) {
             this.id = id;
             this.displayName = displayName;
             this.command = command;
+            this.distroName = distroName;
         }
     }
 
     // 核心知名 AI 编程软件与命令行 AI 智能体库
     private static final AppItem[] KNOWN_AI_APPS = new AppItem[]{
-        new AppItem("codex", "🤖 Codex", "codex"),
-        new AppItem("pi", "⚡ Pi", "pi"),
-        new AppItem("opencode", "💻 OpenCode", "opencode"),
-        new AppItem("claude", "🧠 Claude", "claude"),
-        new AppItem("agy", "🚀 AGY", "agy"),
-        new AppItem("aider", "🤝 Aider", "aider"),
-        new AppItem("copilot", "✈️ Copilot", "copilot"),
-        new AppItem("gh-copilot", "✈️ Copilot", "gh copilot"),
-        new AppItem("cursor", "🎯 Cursor", "cursor"),
-        new AppItem("gemini", "♊ Gemini", "gemini"),
-        new AppItem("chatgpt", "💬 ChatGPT", "chatgpt"),
-        new AppItem("sgpt", "🐚 SGPT", "sgpt"),
-        new AppItem("interpreter", "🗣️ Interpreter", "interpreter"),
-        new AppItem("open-interpreter", "🗣️ Interpreter", "open-interpreter"),
-        new AppItem("plandex", "📋 Plandex", "plandex"),
-        new AppItem("mentat", "🧬 Mentat", "mentat"),
-        new AppItem("gpt-engineer", "⚙️ GPT-Eng", "gpt-engineer"),
-        new AppItem("ollama", "🦙 Ollama", "ollama"),
-        new AppItem("cody", "🔮 Cody", "cody"),
-        new AppItem("tabby", "🐱 Tabby", "tabby"),
-        new AppItem("continue", "⏩ Continue", "continue"),
-        new AppItem("fabric", "🧵 Fabric", "fabric"),
-        new AppItem("khoj", "🔍 Khoj", "khoj"),
-        new AppItem("codeman", "📦 CodeMan", "codeman")
+        new AppItem("codex", "🤖 Codex", "codex", null),
+        new AppItem("pi", "⚡ Pi", "pi", null),
+        new AppItem("opencode", "💻 OpenCode", "opencode", null),
+        new AppItem("claude", "🧠 Claude", "claude", null),
+        new AppItem("agy", "🚀 AGY", "agy", null),
+        new AppItem("aider", "🤝 Aider", "aider", null),
+        new AppItem("copilot", "✈️ Copilot", "copilot", null),
+        new AppItem("gh-copilot", "✈️ Copilot", "gh copilot", null),
+        new AppItem("cursor", "🎯 Cursor", "cursor", null),
+        new AppItem("gemini", "♊ Gemini", "gemini", null),
+        new AppItem("chatgpt", "💬 ChatGPT", "chatgpt", null),
+        new AppItem("sgpt", "🐚 SGPT", "sgpt", null),
+        new AppItem("interpreter", "🗣️ Interpreter", "interpreter", null),
+        new AppItem("open-interpreter", "🗣️ Interpreter", "open-interpreter", null),
+        new AppItem("plandex", "📋 Plandex", "plandex", null),
+        new AppItem("mentat", "🧬 Mentat", "mentat", null),
+        new AppItem("gpt-engineer", "⚙️ GPT-Eng", "gpt-engineer", null),
+        new AppItem("ollama", "🦙 Ollama", "ollama", null),
+        new AppItem("cody", "🔮 Cody", "cody", null),
+        new AppItem("tabby", "🐱 Tabby", "tabby", null),
+        new AppItem("continue", "⏩ Continue", "continue", null),
+        new AppItem("fabric", "🧵 Fabric", "fabric", null),
+        new AppItem("khoj", "🔍 Khoj", "khoj", null),
+        new AppItem("codeman", "📦 CodeMan", "codeman", null)
     };
 
     // AI 编程软件特征关键字（用于动态匹配用户自装的 AI 智能体/CLI 工具）
     private static final String[] AI_KEYWORDS = new String[]{
         "ai", "gpt", "claude", "agent", "code", "llm", "bot", "chat",
-        "copilot", "gemini", "deepseek", "qwen", "ollama", "pi"
+        "copilot", "gemini", "deepseek", "qwen", "ollama", "pi", "openai"
     };
 
-    public static boolean isUbuntuInstalled() {
-        File rootfs = new File(UBUNTU_ROOTFS_PATH);
-        return rootfs.exists() && rootfs.isDirectory();
+    public static List<File> getInstalledDistroRoots() {
+        List<File> distros = new ArrayList<>();
+        File base = new File(ROOTFS_BASE_PATH);
+        if (base.exists() && base.isDirectory()) {
+            File[] files = base.listFiles();
+            if (files != null) {
+                for (File f : files) {
+                    if (f.isDirectory()) {
+                        distros.add(f);
+                        if (sDefaultDistroName == null || sDefaultDistroName.equals("ubuntu")) {
+                            sDefaultDistroName = f.getName();
+                        }
+                    }
+                }
+            }
+        }
+        return distros;
+    }
+
+    public static boolean isProotDistroInstalled() {
+        return !getInstalledDistroRoots().isEmpty();
     }
 
     public static List<AppItem> getInstalledApps(Context context) {
         List<AppItem> result = new ArrayList<>();
         Set<String> addedIds = new HashSet<>();
-        boolean hasUbuntu = isUbuntuInstalled();
 
-        List<File> searchDirs = new ArrayList<>();
-        List<File> userCustomDirs = new ArrayList<>();
+        // 1. 探测 proot-distro 容器
+        List<File> distroRoots = getInstalledDistroRoots();
+        for (File rootfs : distroRoots) {
+            String distro = rootfs.getName();
+            List<File> dirs = new ArrayList<>();
+            dirs.add(new File(rootfs, "usr/bin"));
+            dirs.add(new File(rootfs, "usr/local/bin"));
+            dirs.add(new File(rootfs, "root/.local/bin"));
+            dirs.add(new File(rootfs, "root/.cargo/bin"));
+            dirs.add(new File(rootfs, "root/.npm-global/bin"));
+            dirs.add(new File(rootfs, "root/go/bin"));
 
-        if (hasUbuntu) {
-            File ubuntuRoot = new File(UBUNTU_ROOTFS_PATH);
-            searchDirs.add(new File(ubuntuRoot, "usr/bin"));
-            searchDirs.add(new File(ubuntuRoot, "usr/local/bin"));
-            searchDirs.add(new File(ubuntuRoot, "root/.local/bin"));
-            searchDirs.add(new File(ubuntuRoot, "root/.cargo/bin"));
-            searchDirs.add(new File(ubuntuRoot, "root/.npm-global/bin"));
-            searchDirs.add(new File(ubuntuRoot, "root/go/bin"));
-
-            userCustomDirs.add(new File(ubuntuRoot, "root/.local/bin"));
-            userCustomDirs.add(new File(ubuntuRoot, "root/.cargo/bin"));
-            userCustomDirs.add(new File(ubuntuRoot, "root/.npm-global/bin"));
-            userCustomDirs.add(new File(ubuntuRoot, "root/go/bin"));
-            userCustomDirs.add(new File(ubuntuRoot, "usr/local/bin"));
-
-            // 动态遍历 /home/* 目录下的个人 bin 目录
-            File homeDir = new File(ubuntuRoot, "home");
-            if (homeDir.exists() && homeDir.isDirectory()) {
-                File[] userHomes = homeDir.listFiles();
-                if (userHomes != null) {
-                    for (File userHome : userHomes) {
-                        if (userHome.isDirectory()) {
-                            File uLocalBin = new File(userHome, ".local/bin");
-                            searchDirs.add(uLocalBin);
-                            userCustomDirs.add(uLocalBin);
-                            File uCargoBin = new File(userHome, ".cargo/bin");
-                            searchDirs.add(uCargoBin);
-                            userCustomDirs.add(uCargoBin);
+            File home = new File(rootfs, "home");
+            if (home.exists() && home.isDirectory()) {
+                File[] uHomes = home.listFiles();
+                if (uHomes != null) {
+                    for (File u : uHomes) {
+                        if (u.isDirectory()) {
+                            dirs.add(new File(u, ".local/bin"));
+                            dirs.add(new File(u, ".cargo/bin"));
+                            dirs.add(new File(u, ".npm-global/bin"));
                         }
                     }
                 }
             }
+
+            scanDirectoriesForApps(dirs, distro, result, addedIds);
         }
 
-        // 同时检查 Termux 本地安装目录
-        File termuxFiles = context.getFilesDir();
-        searchDirs.add(new File(termuxFiles, "usr/bin"));
-        searchDirs.add(new File(termuxFiles, "home/.local/bin"));
-        userCustomDirs.add(new File(termuxFiles, "home/.local/bin"));
-
-        // 1. 扫描已知知名 AI 编程软件
-        for (AppItem app : KNOWN_AI_APPS) {
-            for (File dir : searchDirs) {
-                if (!dir.exists() || !dir.isDirectory()) continue;
-                File bin = new File(dir, app.id);
-                if (bin.exists() && !bin.isDirectory()) {
-                    if (!addedIds.contains(app.id) && !addedIds.contains(app.command)) {
-                        result.add(app);
-                        addedIds.add(app.id);
-                        addedIds.add(app.command);
-                    }
-                    break;
-                }
-            }
-        }
-
-        // 2. 动态识别用户自行在私有目录中安装的 AI 编程软件（只匹配含 AI/编程智能体特征的文件）
-        for (File dir : userCustomDirs) {
-            if (!dir.exists() || !dir.isDirectory()) continue;
-            File[] files = dir.listFiles();
-            if (files != null) {
-                for (File f : files) {
-                    String name = f.getName();
-                    if (!f.isFile() || name.startsWith(".")) continue;
-                    if (addedIds.contains(name)) continue;
-
-                    // 过滤掉非命令扩展名
-                    if (name.endsWith(".pyc") || name.endsWith(".bak") || name.endsWith(".txt")) continue;
-
-                    // 校验是否符合 AI 编程软件命名特征
-                    String lower = name.toLowerCase(Locale.ROOT);
-                    boolean isAiTool = false;
-                    for (String kw : AI_KEYWORDS) {
-                        if (lower.contains(kw)) {
-                            isAiTool = true;
-                            break;
-                        }
-                    }
-
-                    if (isAiTool) {
-                        result.add(new AppItem(name, "🤖 " + name, name));
-                        addedIds.add(name);
-                    }
-                }
-            }
-        }
+        // 2. 探测 Termux 本地环境
+        File filesDir = context.getFilesDir();
+        List<File> termuxDirs = new ArrayList<>();
+        termuxDirs.add(new File(filesDir, "usr/bin"));
+        termuxDirs.add(new File(filesDir, "home/.local/bin"));
+        termuxDirs.add(new File(filesDir, "home/.cargo/bin"));
+        scanDirectoriesForApps(termuxDirs, null, result, addedIds);
 
         return result;
+    }
+
+    private static void scanDirectoriesForApps(List<File> dirs, String distro, List<AppItem> result, Set<String> addedIds) {
+        for (File dir : dirs) {
+            if (!dir.exists() || !dir.isDirectory()) continue;
+
+            // 使用 list() 获取目录所有直属文件/软链接名，绝不漏掉容器内软链接
+            String[] names = dir.list();
+            if (names == null || names.length == 0) continue;
+
+            Set<String> nameSet = new HashSet<>(Arrays.asList(names));
+
+            // A. 匹配已知 AI 软件
+            for (AppItem known : KNOWN_AI_APPS) {
+                if (nameSet.contains(known.id)) {
+                    if (!addedIds.contains(known.id) && !addedIds.contains(known.command)) {
+                        result.add(new AppItem(known.id, known.displayName, known.command, distro));
+                        addedIds.add(known.id);
+                        addedIds.add(known.command);
+                    }
+                }
+            }
+
+            // B. 动态匹配私有目录下符合 AI 关键词的软件
+            for (String name : names) {
+                if (name.startsWith(".") || addedIds.contains(name)) continue;
+                if (name.endsWith(".pyc") || name.endsWith(".bak") || name.endsWith(".txt") || name.endsWith(".so")) continue;
+
+                String lower = name.toLowerCase(Locale.ROOT);
+                boolean isAi = false;
+                for (String kw : AI_KEYWORDS) {
+                    if (lower.contains(kw)) {
+                        isAi = true;
+                        break;
+                    }
+                }
+
+                if (isAi) {
+                    result.add(new AppItem(name, "🤖 " + name, name, distro));
+                    addedIds.add(name);
+                }
+            }
+        }
     }
 
     public static void launchApp(TermuxActivity activity, AppItem app) {
@@ -174,9 +185,10 @@ public class UbuntuAppManager {
         }
 
         String execCmd;
-        if (isUbuntuInstalled()) {
-            // 穿透拉起 Ubuntu 容器内软件
-            execCmd = "proot-distro login ubuntu -- " + app.command + "\n";
+        if (app.distroName != null) {
+            execCmd = "proot-distro login " + app.distroName + " -- " + app.command + "\n";
+        } else if (isProotDistroInstalled()) {
+            execCmd = "proot-distro login " + sDefaultDistroName + " -- " + app.command + "\n";
         } else {
             execCmd = app.command + "\n";
         }

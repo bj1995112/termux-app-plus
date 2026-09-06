@@ -138,6 +138,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private boolean mIsUbuntuAppsExpanded = true;
 
     /**
+     * Global static instance of TermuxActivity for style and prompt hot-reloading.
+     */
+    public static TermuxActivity sInstance;
+
+    /**
      * The client for the {@link #mExtraKeysView}.
      */
     TermuxTerminalExtraKeys mTermuxTerminalExtraKeys;
@@ -223,6 +228,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         super.onCreate(savedInstanceState);
 
         setContentView(R.layout.activity_termux);
+        sInstance = this;
 
         // Load termux shared preferences
         // This will also fail if TermuxConstants.TERMUX_PACKAGE_NAME does not equal applicationId
@@ -366,6 +372,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @Override
     public void onDestroy() {
         super.onDestroy();
+        if (sInstance == this) sInstance = null;
 
         Logger.logDebug(LOG_TAG, "onDestroy");
 
@@ -609,10 +616,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 LinearLayout container = findViewById(R.id.ubuntu_apps_container);
                 if (section == null || container == null) return;
 
-                if (apps.isEmpty()) {
-                    section.setVisibility(View.GONE);
-                    return;
-                }
+                float density = getResources().getDisplayMetrics().density;
 
                 section.setVisibility(View.VISIBLE);
                 if (title != null) {
@@ -636,7 +640,20 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
                 container.removeAllViews();
 
-                float density = getResources().getDisplayMetrics().density;
+                if (apps.isEmpty()) {
+                    TextView tip = new TextView(this);
+                    tip.setText("💡 容器/本地未发现 AI 工具 (点击扫描)");
+                    tip.setTextSize(11);
+                    tip.setAlpha(0.65f);
+                    tip.setPadding((int) (8 * density), (int) (6 * density), (int) (8 * density), (int) (6 * density));
+                    tip.setOnClickListener(v -> {
+                        Toast.makeText(this, "正在重新探测已安装软件...", Toast.LENGTH_SHORT).show();
+                        setupUbuntuAppsView();
+                    });
+                    container.addView(tip);
+                    return;
+                }
+
                 int padH = (int) (8 * density);
                 int padV = (int) (4 * density);
                 int rowMarginBottom = (int) (6 * density);
