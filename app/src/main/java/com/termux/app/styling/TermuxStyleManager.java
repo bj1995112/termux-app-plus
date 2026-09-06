@@ -21,9 +21,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 public class TermuxStyleManager {
 
@@ -360,5 +362,74 @@ public class TermuxStyleManager {
         } catch (Exception ignored) {
         }
         return colors;
+    }
+
+    // --- 收藏功能支持 ---
+    public static final String PREF_FAVORITE_COLORS = "pref_favorite_colors";
+    public static final String PREF_FAVORITE_FONTS = "pref_favorite_fonts";
+
+    public static Set<String> getFavoriteColors(Context context) {
+        SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(context);
+        return new HashSet<>(sp.getStringSet(PREF_FAVORITE_COLORS, Collections.emptySet()));
+    }
+
+    public static boolean toggleFavoriteColor(Context context, String fileName) {
+        SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(context);
+        Set<String> set = new HashSet<>(sp.getStringSet(PREF_FAVORITE_COLORS, Collections.emptySet()));
+        boolean isFav;
+        if (set.contains(fileName)) {
+            set.remove(fileName);
+            isFav = false;
+        } else {
+            set.add(fileName);
+            isFav = true;
+        }
+        sp.edit().putStringSet(PREF_FAVORITE_COLORS, set).apply();
+        return isFav;
+    }
+
+    public static boolean isFavoriteColor(Context context, String fileName) {
+        SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(context);
+        Set<String> set = sp.getStringSet(PREF_FAVORITE_COLORS, Collections.emptySet());
+        return set != null && set.contains(fileName);
+    }
+
+    public static Set<String> getFavoriteFonts(Context context) {
+        SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(context);
+        return new HashSet<>(sp.getStringSet(PREF_FAVORITE_FONTS, Collections.emptySet()));
+    }
+
+    public static boolean toggleFavoriteFont(Context context, String fileName) {
+        SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(context);
+        Set<String> set = new HashSet<>(sp.getStringSet(PREF_FAVORITE_FONTS, Collections.emptySet()));
+        boolean isFav;
+        if (set.contains(fileName)) {
+            set.remove(fileName);
+            isFav = false;
+        } else {
+            set.add(fileName);
+            isFav = true;
+        }
+        sp.edit().putStringSet(PREF_FAVORITE_FONTS, set).apply();
+        return isFav;
+    }
+
+    public static boolean isFavoriteFont(Context context, String fileName) {
+        SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(context);
+        Set<String> set = sp.getStringSet(PREF_FAVORITE_FONTS, Collections.emptySet());
+        return set != null && set.contains(fileName);
+    }
+
+    public static void sortItemsWithFavorites(List<StyleItem> list, Set<String> favs) {
+        Collections.sort(list, (a, b) -> {
+            if (DEFAULT_NAME.equalsIgnoreCase(a.fileName)) return -1;
+            if (DEFAULT_NAME.equalsIgnoreCase(b.fileName)) return 1;
+            boolean aFav = favs != null && favs.contains(a.fileName);
+            boolean bFav = favs != null && favs.contains(b.fileName);
+            if (aFav != bFav) {
+                return aFav ? -1 : 1; // 收藏的排在最前
+            }
+            return a.displayName.compareToIgnoreCase(b.displayName);
+        });
     }
 }

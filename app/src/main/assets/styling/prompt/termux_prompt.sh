@@ -4,16 +4,12 @@
 # 零输入注入 · 动态热加载 · 跨环境（Termux 原生 & Ubuntu 容器）双向兼容
 # ==============================================================================
 
-# 定位配置文件（优先用户 HOME，其次 Termux 宿主路径，兼顾 termux-webui 兼容）
+# 定位配置文件（优先当前环境 HOME，其次 Termux 宿主路径）
 __termux_find_prompt_conf() {
     if [ -r "$HOME/.termux/prompt.conf" ]; then
         echo "$HOME/.termux/prompt.conf"
-    elif [ -r "$HOME/.config/termux-webui/prompt.conf" ]; then
-        echo "$HOME/.config/termux-webui/prompt.conf"
     elif [ -r "/data/data/com.termux/files/home/.termux/prompt.conf" ]; then
         echo "/data/data/com.termux/files/home/.termux/prompt.conf"
-    elif [ -r "/data/data/com.termux/files/home/.config/termux-webui/prompt.conf" ]; then
-        echo "/data/data/com.termux/files/home/.config/termux-webui/prompt.conf"
     else
         echo ""
     fi

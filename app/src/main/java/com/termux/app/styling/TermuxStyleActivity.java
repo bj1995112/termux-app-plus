@@ -28,6 +28,7 @@ import com.termux.terminal.TerminalSession;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 public class TermuxStyleActivity extends AppCompatActivity {
 
@@ -67,6 +68,8 @@ public class TermuxStyleActivity extends AppCompatActivity {
 
         mColorSchemes = TermuxStyleManager.getColorSchemes(this);
         mFonts = TermuxStyleManager.getFonts(this);
+        TermuxStyleManager.sortItemsWithFavorites(mColorSchemes, TermuxStyleManager.getFavoriteColors(this));
+        TermuxStyleManager.sortItemsWithFavorites(mFonts, TermuxStyleManager.getFavoriteFonts(this));
 
         updateCurrentState();
 
@@ -146,45 +149,253 @@ public class TermuxStyleActivity extends AppCompatActivity {
     }
 
     private void showColorSchemeDialog() {
-        String[] items = new String[mColorSchemes.size()];
-        for (int i = 0; i < mColorSchemes.size(); i++) {
-            items[i] = mColorSchemes.get(i).displayName;
-        }
+        float density = getResources().getDisplayMetrics().density;
+        Set<String> favColors = TermuxStyleManager.getFavoriteColors(this);
+        TermuxStyleManager.sortItemsWithFavorites(mColorSchemes, favColors);
 
-        new AlertDialog.Builder(this)
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+
+        TextView hint = new TextView(this);
+        hint.setText("💡 点击直接应用，点击星号 ★ 收藏并置顶常用主题");
+        hint.setTextSize(11);
+        hint.setTextColor(0xFF9E9E9E);
+        hint.setPadding((int) (16 * density), (int) (8 * density), (int) (16 * density), (int) (6 * density));
+        content.addView(hint);
+
+        ListView listView = new ListView(this);
+        listView.setDividerHeight(1);
+        listView.setFastScrollEnabled(true);
+        LinearLayout.LayoutParams lpList = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        );
+        listView.setLayoutParams(lpList);
+        content.addView(listView);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
             .setTitle(R.string.styling_color_scheme_title)
-            .setItems(items, (dialog, which) -> {
-                TermuxStyleManager.StyleItem selected = mColorSchemes.get(which);
-                boolean success = TermuxStyleManager.applyColorScheme(this, selected.fileName);
-                if (success) {
-                    mCurrentColorText.setText(selected.displayName);
-                    updateCurrentState();
-                    Toast.makeText(this, getString(R.string.styling_applied) + ": " + selected.displayName, Toast.LENGTH_SHORT).show();
-                }
-            })
+            .setView(content)
             .setNegativeButton(R.string.action_cancel, null)
-            .show();
+            .create();
+
+        BaseAdapter adapter = new BaseAdapter() {
+            @Override
+            public int getCount() {
+                return mColorSchemes.size();
+            }
+
+            @Override
+            public TermuxStyleManager.StyleItem getItem(int position) {
+                return mColorSchemes.get(position);
+            }
+
+            @Override
+            public long getItemId(int position) {
+                return position;
+            }
+
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                LinearLayout row;
+                TextView tvName;
+                TextView tvStar;
+
+                if (convertView == null) {
+                    row = new LinearLayout(TermuxStyleActivity.this);
+                    row.setOrientation(LinearLayout.HORIZONTAL);
+                    row.setGravity(Gravity.CENTER_VERTICAL);
+                    row.setPadding((int) (16 * density), (int) (10 * density), (int) (12 * density), (int) (10 * density));
+                    row.setBackgroundResource(android.R.drawable.list_selector_background);
+
+                    tvName = new TextView(TermuxStyleActivity.this);
+                    tvName.setTextSize(13);
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                    tvName.setLayoutParams(lp);
+                    row.addView(tvName);
+
+                    tvStar = new TextView(TermuxStyleActivity.this);
+                    tvStar.setTextSize(18);
+                    tvStar.setPadding((int) (10 * density), (int) (4 * density), (int) (10 * density), (int) (4 * density));
+                    row.addView(tvStar);
+
+                    row.setTag(new View[]{tvName, tvStar});
+                } else {
+                    row = (LinearLayout) convertView;
+                    View[] holder = (View[]) row.getTag();
+                    tvName = (TextView) holder[0];
+                    tvStar = (TextView) holder[1];
+                }
+
+                TermuxStyleManager.StyleItem item = getItem(position);
+                boolean isDefault = TermuxStyleManager.DEFAULT_NAME.equalsIgnoreCase(item.fileName);
+                boolean isFav = TermuxStyleManager.isFavoriteColor(TermuxStyleActivity.this, item.fileName);
+
+                if (isFav) {
+                    tvName.setText("★ " + item.displayName);
+                    tvName.setTextColor(0xFFFFD54F); // 金黄色
+                    tvStar.setText("★");
+                    tvStar.setTextColor(0xFFFFD54F);
+                } else {
+                    tvName.setText(item.displayName);
+                    tvName.setTextColor(0xFFE0E0E0);
+                    tvStar.setText(isDefault ? "" : "☆");
+                    tvStar.setTextColor(0xFF757575);
+                }
+
+                if (isDefault) {
+                    tvStar.setVisibility(View.GONE);
+                } else {
+                    tvStar.setVisibility(View.VISIBLE);
+                    tvStar.setOnClickListener(v -> {
+                        boolean nowFav = TermuxStyleManager.toggleFavoriteColor(TermuxStyleActivity.this, item.fileName);
+                        Set<String> updatedFavs = TermuxStyleManager.getFavoriteColors(TermuxStyleActivity.this);
+                        TermuxStyleManager.sortItemsWithFavorites(mColorSchemes, updatedFavs);
+                        notifyDataSetChanged();
+                        Toast.makeText(TermuxStyleActivity.this, nowFav ? "已收藏并置顶：" + item.displayName : "已取消收藏", Toast.LENGTH_SHORT).show();
+                    });
+                }
+
+                row.setOnClickListener(v -> {
+                    dialog.dismiss();
+                    boolean success = TermuxStyleManager.applyColorScheme(TermuxStyleActivity.this, item.fileName);
+                    if (success) {
+                        mCurrentColorText.setText(item.displayName);
+                        updateCurrentState();
+                        Toast.makeText(TermuxStyleActivity.this, getString(R.string.styling_applied) + ": " + item.displayName, Toast.LENGTH_SHORT).show();
+                    }
+                });
+
+                return row;
+            }
+        };
+
+        listView.setAdapter(adapter);
+        dialog.show();
     }
 
     private void showFontDialog() {
-        String[] items = new String[mFonts.size()];
-        for (int i = 0; i < mFonts.size(); i++) {
-            items[i] = mFonts.get(i).displayName;
-        }
+        float density = getResources().getDisplayMetrics().density;
+        Set<String> favFonts = TermuxStyleManager.getFavoriteFonts(this);
+        TermuxStyleManager.sortItemsWithFavorites(mFonts, favFonts);
 
-        new AlertDialog.Builder(this)
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+
+        TextView hint = new TextView(this);
+        hint.setText("💡 点击直接应用，点击星号 ★ 收藏并置顶常用字体");
+        hint.setTextSize(11);
+        hint.setTextColor(0xFF9E9E9E);
+        hint.setPadding((int) (16 * density), (int) (8 * density), (int) (16 * density), (int) (6 * density));
+        content.addView(hint);
+
+        ListView listView = new ListView(this);
+        listView.setDividerHeight(1);
+        listView.setFastScrollEnabled(true);
+        LinearLayout.LayoutParams lpList = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        );
+        listView.setLayoutParams(lpList);
+        content.addView(listView);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
             .setTitle(R.string.styling_font_title)
-            .setItems(items, (dialog, which) -> {
-                TermuxStyleManager.StyleItem selected = mFonts.get(which);
-                boolean success = TermuxStyleManager.applyFont(this, selected.fileName);
-                if (success) {
-                    mCurrentFontText.setText(selected.displayName);
-                    updateCurrentState();
-                    Toast.makeText(this, getString(R.string.styling_applied) + ": " + selected.displayName, Toast.LENGTH_SHORT).show();
-                }
-            })
+            .setView(content)
             .setNegativeButton(R.string.action_cancel, null)
-            .show();
+            .create();
+
+        BaseAdapter adapter = new BaseAdapter() {
+            @Override
+            public int getCount() {
+                return mFonts.size();
+            }
+
+            @Override
+            public TermuxStyleManager.StyleItem getItem(int position) {
+                return mFonts.get(position);
+            }
+
+            @Override
+            public long getItemId(int position) {
+                return position;
+            }
+
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                LinearLayout row;
+                TextView tvName;
+                TextView tvStar;
+
+                if (convertView == null) {
+                    row = new LinearLayout(TermuxStyleActivity.this);
+                    row.setOrientation(LinearLayout.HORIZONTAL);
+                    row.setGravity(Gravity.CENTER_VERTICAL);
+                    row.setPadding((int) (16 * density), (int) (10 * density), (int) (12 * density), (int) (10 * density));
+                    row.setBackgroundResource(android.R.drawable.list_selector_background);
+
+                    tvName = new TextView(TermuxStyleActivity.this);
+                    tvName.setTextSize(13);
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                    tvName.setLayoutParams(lp);
+                    row.addView(tvName);
+
+                    tvStar = new TextView(TermuxStyleActivity.this);
+                    tvStar.setTextSize(18);
+                    tvStar.setPadding((int) (10 * density), (int) (4 * density), (int) (10 * density), (int) (4 * density));
+                    row.addView(tvStar);
+
+                    row.setTag(new View[]{tvName, tvStar});
+                } else {
+                    row = (LinearLayout) convertView;
+                    View[] holder = (View[]) row.getTag();
+                    tvName = (TextView) holder[0];
+                    tvStar = (TextView) holder[1];
+                }
+
+                TermuxStyleManager.StyleItem item = getItem(position);
+                boolean isDefault = TermuxStyleManager.DEFAULT_NAME.equalsIgnoreCase(item.fileName);
+                boolean isFav = TermuxStyleManager.isFavoriteFont(TermuxStyleActivity.this, item.fileName);
+
+                if (isFav) {
+                    tvName.setText("★ " + item.displayName);
+                    tvName.setTextColor(0xFFFFD54F); // 金黄色
+                    tvStar.setText("★");
+                    tvStar.setTextColor(0xFFFFD54F);
+                } else {
+                    tvName.setText(item.displayName);
+                    tvName.setTextColor(0xFFE0E0E0);
+                    tvStar.setText(isDefault ? "" : "☆");
+                    tvStar.setTextColor(0xFF757575);
+                }
+
+                if (isDefault) {
+                    tvStar.setVisibility(View.GONE);
+                } else {
+                    tvStar.setVisibility(View.VISIBLE);
+                    tvStar.setOnClickListener(v -> {
+                        boolean nowFav = TermuxStyleManager.toggleFavoriteFont(TermuxStyleActivity.this, item.fileName);
+                        Set<String> updatedFavs = TermuxStyleManager.getFavoriteFonts(TermuxStyleActivity.this);
+                        TermuxStyleManager.sortItemsWithFavorites(mFonts, updatedFavs);
+                        notifyDataSetChanged();
+                        Toast.makeText(TermuxStyleActivity.this, nowFav ? "已收藏并置顶：" + item.displayName : "已取消收藏", Toast.LENGTH_SHORT).show();
+                    });
+                }
+
+                row.setOnClickListener(v -> {
+                    dialog.dismiss();
+                    boolean success = TermuxStyleManager.applyFont(TermuxStyleActivity.this, item.fileName);
+                    if (success) {
+                        mCurrentFontText.setText(item.displayName);
+                        updateCurrentState();
+                        Toast.makeText(TermuxStyleActivity.this, getString(R.string.styling_applied) + ": " + item.displayName, Toast.LENGTH_SHORT).show();
+                    }
+                });
+
+                return row;
+            }
+        };
+
+        listView.setAdapter(adapter);
+        dialog.show();
     }
 
     /**

@@ -136,11 +136,6 @@ public class TermuxPromptManager {
         File hostTermux = new File(filesDir, "home/.termux");
         list.add(new File(hostTermux, "prompt.conf"));
 
-        File hostTwui = new File(filesDir, "home/.config/termux-webui");
-        if (hostTwui.exists()) {
-            list.add(new File(hostTwui, "prompt.conf"));
-        }
-
         // 2. 扫描 proot-distro 所有容器 rootfs
         File containersDir = new File(filesDir, "usr/var/lib/proot-distro/containers");
         if (containersDir.exists() && containersDir.isDirectory()) {
@@ -152,7 +147,6 @@ public class TermuxPromptManager {
                         if (rootfs.exists() && rootfs.isDirectory()) {
                             // 容器 root 用户路径
                             list.add(new File(rootfs, "root/.termux/prompt.conf"));
-                            list.add(new File(rootfs, "root/.config/termux-webui/prompt.conf"));
 
                             // 容器普通用户路径（若有）
                             File guestHome = new File(rootfs, "home");
@@ -175,8 +169,6 @@ public class TermuxPromptManager {
         // 3. 宿主外层容错（当直接在 chroot/proot 或测试环境下运行时）
         File fallbackTermux = new File("/root/.termux/prompt.conf");
         if (!list.contains(fallbackTermux)) list.add(fallbackTermux);
-        File fallbackTwui = new File("/root/.config/termux-webui/prompt.conf");
-        if (!list.contains(fallbackTwui)) list.add(fallbackTwui);
 
         return list;
     }
@@ -278,6 +270,25 @@ public class TermuxPromptManager {
             File localTermux = new File("/root/.termux");
             if (localTermux.exists()) {
                 copyAssetToFile(context, "styling/prompt/termux_prompt.sh", new File(localTermux, "prompt.sh"));
+            }
+
+            // 4. 自动清理可能导致冲突的旧版第三方 webui 配置残留
+            try {
+                File twuiHost = new File(hostHome, ".config/termux-webui/prompt.conf");
+                if (twuiHost.exists()) twuiHost.delete();
+                File twuiLocal = new File("/root/.config/termux-webui/prompt.conf");
+                if (twuiLocal.exists()) twuiLocal.delete();
+            } catch (Exception ignored) {
+            }
+
+            // 5. 确保宿主及容器中的 .zshrc（若存在）也能开箱即用
+            File hostZshrc = new File(hostHome, ".zshrc");
+            if (hostZshrc.exists()) {
+                appendHookIfMissing(hostZshrc, "[ -r \"$HOME/.termux/prompt.sh\" ] && . \"$HOME/.termux/prompt.sh\"");
+            }
+            File localZshrc = new File("/root/.zshrc");
+            if (localZshrc.exists()) {
+                appendHookIfMissing(localZshrc, "[ -r \"$HOME/.termux/prompt.sh\" ] && . \"$HOME/.termux/prompt.sh\"");
             }
 
         } catch (Exception ignored) {
