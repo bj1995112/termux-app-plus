@@ -133,6 +133,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     ExtraKeysView mExtraKeysView;
 
     /**
+     * Whether AI programming apps section in drawer is expanded.
+     */
+    private boolean mIsUbuntuAppsExpanded = true;
+
+    /**
      * The client for the {@link #mExtraKeysView}.
      */
     TermuxTerminalExtraKeys mTermuxTerminalExtraKeys;
@@ -598,6 +603,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             List<com.termux.app.ubuntu.UbuntuAppManager.AppItem> apps = com.termux.app.ubuntu.UbuntuAppManager.getInstalledApps(this);
             runOnUiThread(() -> {
                 View section = findViewById(R.id.ubuntu_apps_section);
+                View header = findViewById(R.id.ubuntu_apps_header);
+                TextView title = findViewById(R.id.ubuntu_apps_title);
+                TextView expandIcon = findViewById(R.id.ubuntu_apps_expand_icon);
                 LinearLayout container = findViewById(R.id.ubuntu_apps_container);
                 if (section == null || container == null) return;
 
@@ -607,31 +615,86 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 }
 
                 section.setVisibility(View.VISIBLE);
+                if (title != null) {
+                    title.setText("🤖 AI 编程软件 (" + apps.size() + ")");
+                }
+
+                if (header != null) {
+                    header.setOnClickListener(v -> {
+                        mIsUbuntuAppsExpanded = !mIsUbuntuAppsExpanded;
+                        container.setVisibility(mIsUbuntuAppsExpanded ? View.VISIBLE : View.GONE);
+                        if (expandIcon != null) {
+                            expandIcon.setText(mIsUbuntuAppsExpanded ? "收起 ▴" : "展开 ▾");
+                        }
+                    });
+                }
+
+                container.setVisibility(mIsUbuntuAppsExpanded ? View.VISIBLE : View.GONE);
+                if (expandIcon != null) {
+                    expandIcon.setText(mIsUbuntuAppsExpanded ? "收起 ▴" : "展开 ▾");
+                }
+
                 container.removeAllViews();
 
-                int padH = (int) (12 * getResources().getDisplayMetrics().density);
-                int padV = (int) (6 * getResources().getDisplayMetrics().density);
-                int marginR = (int) (8 * getResources().getDisplayMetrics().density);
+                float density = getResources().getDisplayMetrics().density;
+                int padH = (int) (8 * density);
+                int padV = (int) (4 * density);
+                int rowMarginBottom = (int) (6 * density);
+                int gap = (int) (4 * density);
 
-                for (com.termux.app.ubuntu.UbuntuAppManager.AppItem app : apps) {
-                    com.google.android.material.button.MaterialButton btn = new com.google.android.material.button.MaterialButton(this);
+                LinearLayout currentRow = null;
+                for (int i = 0; i < apps.size(); i++) {
+                    com.termux.app.ubuntu.UbuntuAppManager.AppItem app = apps.get(i);
+                    if (i % 2 == 0) {
+                        currentRow = new LinearLayout(this);
+                        currentRow.setOrientation(LinearLayout.HORIZONTAL);
+                        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        );
+                        rlp.bottomMargin = rowMarginBottom;
+                        currentRow.setLayoutParams(rlp);
+                        container.addView(currentRow);
+                    }
+
+                    com.google.android.material.button.MaterialButton btn = new com.google.android.material.button.MaterialButton(
+                        this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle
+                    );
                     btn.setText(app.displayName);
                     btn.setTextSize(12);
                     btn.setAllCaps(false);
                     btn.setPadding(padH, padV, padH, padV);
-                    btn.setCornerRadius((int) (8 * getResources().getDisplayMetrics().density));
+                    btn.setCornerRadius((int) (8 * density));
                     LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        (int) (36 * getResources().getDisplayMetrics().density)
+                        0,
+                        (int) (38 * density),
+                        1.0f
                     );
-                    lp.rightMargin = marginR;
+                    if (i % 2 == 0) {
+                        lp.rightMargin = gap;
+                    } else {
+                        lp.leftMargin = gap;
+                    }
                     btn.setLayoutParams(lp);
 
                     btn.setOnClickListener(v -> {
                         com.termux.app.ubuntu.UbuntuAppManager.launchApp(TermuxActivity.this, app);
                     });
 
-                    container.addView(btn);
+                    if (currentRow != null) {
+                        currentRow.addView(btn);
+                    }
+                }
+
+                // 若总数为奇数，填充空白占位保持左右对齐
+                if (apps.size() % 2 != 0 && currentRow != null) {
+                    View spacer = new View(this);
+                    LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(
+                        0, 0, 1.0f
+                    );
+                    spLp.leftMargin = gap;
+                    spacer.setLayoutParams(spLp);
+                    currentRow.addView(spacer);
                 }
             });
         }).start();
@@ -687,6 +750,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         TextView appsTitle = findViewById(R.id.ubuntu_apps_title);
         if (appsTitle != null) {
             appsTitle.setTextColor(fg);
+        }
+
+        TextView expandIcon = findViewById(R.id.ubuntu_apps_expand_icon);
+        if (expandIcon != null) {
+            expandIcon.setTextColor(fg);
         }
 
         TextView sessionsTitle = findViewById(R.id.sessions_header_title);

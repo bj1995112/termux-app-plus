@@ -10,6 +10,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 public class UbuntuAppManager {
@@ -28,22 +29,38 @@ public class UbuntuAppManager {
         }
     }
 
-    private static final AppItem[] KNOWN_APPS = new AppItem[]{
+    // 核心知名 AI 编程软件与命令行 AI 智能体库
+    private static final AppItem[] KNOWN_AI_APPS = new AppItem[]{
         new AppItem("codex", "🤖 Codex", "codex"),
         new AppItem("pi", "⚡ Pi", "pi"),
         new AppItem("opencode", "💻 OpenCode", "opencode"),
         new AppItem("claude", "🧠 Claude", "claude"),
         new AppItem("agy", "🚀 AGY", "agy"),
-        new AppItem("codeman", "📦 CodeMan", "codeman"),
-        new AppItem("htop", "📊 htop", "htop"),
-        new AppItem("btop", "📈 btop", "btop"),
-        new AppItem("vim", "📝 Vim", "vim"),
-        new AppItem("nvim", "✨ NeoVim", "nvim"),
-        new AppItem("python3", "🐍 Python", "python3"),
-        new AppItem("python", "🐍 Python", "python"),
-        new AppItem("node", "🟩 Node.js", "node"),
-        new AppItem("tmux", "🔲 Tmux", "tmux"),
-        new AppItem("git", "🐙 Git", "git status")
+        new AppItem("aider", "🤝 Aider", "aider"),
+        new AppItem("copilot", "✈️ Copilot", "copilot"),
+        new AppItem("gh-copilot", "✈️ Copilot", "gh copilot"),
+        new AppItem("cursor", "🎯 Cursor", "cursor"),
+        new AppItem("gemini", "♊ Gemini", "gemini"),
+        new AppItem("chatgpt", "💬 ChatGPT", "chatgpt"),
+        new AppItem("sgpt", "🐚 SGPT", "sgpt"),
+        new AppItem("interpreter", "🗣️ Interpreter", "interpreter"),
+        new AppItem("open-interpreter", "🗣️ Interpreter", "open-interpreter"),
+        new AppItem("plandex", "📋 Plandex", "plandex"),
+        new AppItem("mentat", "🧬 Mentat", "mentat"),
+        new AppItem("gpt-engineer", "⚙️ GPT-Eng", "gpt-engineer"),
+        new AppItem("ollama", "🦙 Ollama", "ollama"),
+        new AppItem("cody", "🔮 Cody", "cody"),
+        new AppItem("tabby", "🐱 Tabby", "tabby"),
+        new AppItem("continue", "⏩ Continue", "continue"),
+        new AppItem("fabric", "🧵 Fabric", "fabric"),
+        new AppItem("khoj", "🔍 Khoj", "khoj"),
+        new AppItem("codeman", "📦 CodeMan", "codeman")
+    };
+
+    // AI 编程软件特征关键字（用于动态匹配用户自装的 AI 智能体/CLI 工具）
+    private static final String[] AI_KEYWORDS = new String[]{
+        "ai", "gpt", "claude", "agent", "code", "llm", "bot", "chat",
+        "copilot", "gemini", "deepseek", "qwen", "ollama", "pi"
     };
 
     public static boolean isUbuntuInstalled() {
@@ -56,60 +73,91 @@ public class UbuntuAppManager {
         Set<String> addedIds = new HashSet<>();
         boolean hasUbuntu = isUbuntuInstalled();
 
-        File[] searchDirs;
-        File[] userCustomDirs;
+        List<File> searchDirs = new ArrayList<>();
+        List<File> userCustomDirs = new ArrayList<>();
 
         if (hasUbuntu) {
-            searchDirs = new File[]{
-                new File(UBUNTU_ROOTFS_PATH, "usr/bin"),
-                new File(UBUNTU_ROOTFS_PATH, "usr/local/bin"),
-                new File(UBUNTU_ROOTFS_PATH, "root/.local/bin"),
-                new File(UBUNTU_ROOTFS_PATH, "home/ubuntu/.local/bin")
-            };
-            userCustomDirs = new File[]{
-                new File(UBUNTU_ROOTFS_PATH, "root/.local/bin"),
-                new File(UBUNTU_ROOTFS_PATH, "usr/local/bin"),
-                new File(UBUNTU_ROOTFS_PATH, "home/ubuntu/.local/bin")
-            };
-        } else {
-            searchDirs = new File[]{
-                new File(context.getFilesDir(), "usr/bin"),
-                new File(context.getFilesDir(), "home/.local/bin")
-            };
-            userCustomDirs = new File[]{
-                new File(context.getFilesDir(), "home/.local/bin")
-            };
+            File ubuntuRoot = new File(UBUNTU_ROOTFS_PATH);
+            searchDirs.add(new File(ubuntuRoot, "usr/bin"));
+            searchDirs.add(new File(ubuntuRoot, "usr/local/bin"));
+            searchDirs.add(new File(ubuntuRoot, "root/.local/bin"));
+            searchDirs.add(new File(ubuntuRoot, "root/.cargo/bin"));
+            searchDirs.add(new File(ubuntuRoot, "root/.npm-global/bin"));
+            searchDirs.add(new File(ubuntuRoot, "root/go/bin"));
+
+            userCustomDirs.add(new File(ubuntuRoot, "root/.local/bin"));
+            userCustomDirs.add(new File(ubuntuRoot, "root/.cargo/bin"));
+            userCustomDirs.add(new File(ubuntuRoot, "root/.npm-global/bin"));
+            userCustomDirs.add(new File(ubuntuRoot, "root/go/bin"));
+            userCustomDirs.add(new File(ubuntuRoot, "usr/local/bin"));
+
+            // 动态遍历 /home/* 目录下的个人 bin 目录
+            File homeDir = new File(ubuntuRoot, "home");
+            if (homeDir.exists() && homeDir.isDirectory()) {
+                File[] userHomes = homeDir.listFiles();
+                if (userHomes != null) {
+                    for (File userHome : userHomes) {
+                        if (userHome.isDirectory()) {
+                            File uLocalBin = new File(userHome, ".local/bin");
+                            searchDirs.add(uLocalBin);
+                            userCustomDirs.add(uLocalBin);
+                            File uCargoBin = new File(userHome, ".cargo/bin");
+                            searchDirs.add(uCargoBin);
+                            userCustomDirs.add(uCargoBin);
+                        }
+                    }
+                }
+            }
         }
 
-        // 1. 优先匹配具有专属显示名称和图标的预置已知软件
-        for (AppItem app : KNOWN_APPS) {
+        // 同时检查 Termux 本地安装目录
+        File termuxFiles = context.getFilesDir();
+        searchDirs.add(new File(termuxFiles, "usr/bin"));
+        searchDirs.add(new File(termuxFiles, "home/.local/bin"));
+        userCustomDirs.add(new File(termuxFiles, "home/.local/bin"));
+
+        // 1. 扫描已知知名 AI 编程软件
+        for (AppItem app : KNOWN_AI_APPS) {
             for (File dir : searchDirs) {
+                if (!dir.exists() || !dir.isDirectory()) continue;
                 File bin = new File(dir, app.id);
                 if (bin.exists() && !bin.isDirectory()) {
-                    if (!addedIds.contains(app.command)) {
+                    if (!addedIds.contains(app.id) && !addedIds.contains(app.command)) {
                         result.add(app);
-                        addedIds.add(app.command);
                         addedIds.add(app.id);
+                        addedIds.add(app.command);
                     }
                     break;
                 }
             }
         }
 
-        // 2. 动态扫描用户私有目录（如 pip/npm/cargo 等自行安装在 .local/bin 或 /usr/local/bin 的自定义软件）
+        // 2. 动态识别用户自行在私有目录中安装的 AI 编程软件（只匹配含 AI/编程智能体特征的文件）
         for (File dir : userCustomDirs) {
-            if (dir.exists() && dir.isDirectory()) {
-                File[] files = dir.listFiles();
-                if (files != null) {
-                    for (File f : files) {
-                        String name = f.getName();
-                        if (f.isFile() && !name.startsWith(".") && !addedIds.contains(name)) {
-                            // 过滤掉常见非直接命令脚本或临时文件
-                            if (!name.endsWith(".pyc") && !name.endsWith(".bak")) {
-                                result.add(new AppItem(name, "⚙️ " + name, name));
-                                addedIds.add(name);
-                            }
+            if (!dir.exists() || !dir.isDirectory()) continue;
+            File[] files = dir.listFiles();
+            if (files != null) {
+                for (File f : files) {
+                    String name = f.getName();
+                    if (!f.isFile() || name.startsWith(".")) continue;
+                    if (addedIds.contains(name)) continue;
+
+                    // 过滤掉非命令扩展名
+                    if (name.endsWith(".pyc") || name.endsWith(".bak") || name.endsWith(".txt")) continue;
+
+                    // 校验是否符合 AI 编程软件命名特征
+                    String lower = name.toLowerCase(Locale.ROOT);
+                    boolean isAiTool = false;
+                    for (String kw : AI_KEYWORDS) {
+                        if (lower.contains(kw)) {
+                            isAiTool = true;
+                            break;
                         }
+                    }
+
+                    if (isAiTool) {
+                        result.add(new AppItem(name, "🤖 " + name, name));
+                        addedIds.add(name);
                     }
                 }
             }

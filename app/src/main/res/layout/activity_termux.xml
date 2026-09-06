@@ -104,7 +104,7 @@
                         app:tint="?attr/termuxActivityDrawerImageTint" />
                 </LinearLayout>
 
-                <!-- Ubuntu / Custom Apps Section -->
+                <!-- AI 编程软件可折叠专区 -->
                 <LinearLayout
                     android:id="@+id/ubuntu_apps_section"
                     android:layout_width="match_parent"
@@ -114,30 +114,47 @@
                     android:paddingBottom="8dp"
                     android:visibility="gone">
 
-                    <TextView
-                        android:id="@+id/ubuntu_apps_title"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:paddingHorizontal="4dp"
-                        android:paddingBottom="6dp"
-                        android:text="常用软件 (Ubuntu)"
-                        android:textSize="12sp"
-                        android:textStyle="bold"
-                        android:alpha="0.6"
-                        android:textColor="?attr/termuxActivityDrawerImageTint" />
-
-                    <HorizontalScrollView
+                    <!-- 折叠标题栏 -->
+                    <LinearLayout
+                        android:id="@+id/ubuntu_apps_header"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:scrollbars="none"
-                        android:overScrollMode="never">
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="4dp"
+                        android:paddingVertical="6dp"
+                        android:background="?android:attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true">
 
-                        <LinearLayout
-                            android:id="@+id/ubuntu_apps_container"
+                        <TextView
+                            android:id="@+id/ubuntu_apps_title"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="🤖 AI 编程软件"
+                            android:textSize="12sp"
+                            android:textStyle="bold"
+                            android:alpha="0.85"
+                            android:textColor="?attr/termuxActivityDrawerImageTint" />
+
+                        <TextView
+                            android:id="@+id/ubuntu_apps_expand_icon"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:orientation="horizontal" />
-                    </HorizontalScrollView>
+                            android:text="收起 ▴"
+                            android:textSize="11sp"
+                            android:alpha="0.6"
+                            android:textColor="?attr/termuxActivityDrawerImageTint" />
+                    </LinearLayout>
+
+                    <!-- 纵向排列的多行药丸芯片容器（彻底解决水平滑动与抽屉手势冲突） -->
+                    <LinearLayout
+                        android:id="@+id/ubuntu_apps_container"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:orientation="vertical" />
 
                     <View
                         android:layout_width="match_parent"
