@@ -504,14 +504,33 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             }
 
             TerminalColors.COLOR_SCHEME.updateWith(props);
-            TerminalSession session = mActivity.getCurrentSession();
-            if (session != null && session.getEmulator() != null) {
-                session.getEmulator().mColors.reset();
+
+            // 刷新所有已存在的运行中会话，无需新开窗口
+            if (mActivity.getTermuxService() != null) {
+                List<TermuxSession> termuxSessions = mActivity.getTermuxService().getTermuxSessions();
+                if (termuxSessions != null) {
+                    for (TermuxSession tSession : termuxSessions) {
+                        TerminalSession ts = tSession.getTerminalSession();
+                        if (ts != null && ts.getEmulator() != null) {
+                            ts.getEmulator().mColors.reset();
+                        }
+                    }
+                }
+            } else {
+                TerminalSession session = mActivity.getCurrentSession();
+                if (session != null && session.getEmulator() != null) {
+                    session.getEmulator().mColors.reset();
+                }
             }
+
             updateBackgroundColor();
 
             final Typeface newTypeface = (fontFile.exists() && fontFile.length() > 0) ? Typeface.createFromFile(fontFile) : Typeface.MONOSPACE;
-            mActivity.getTerminalView().setTypeface(newTypeface);
+            if (mActivity.getTerminalView() != null) {
+                mActivity.getTerminalView().setTypeface(newTypeface);
+                mActivity.getTerminalView().onScreenUpdated();
+                mActivity.getTerminalView().invalidate();
+            }
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Error in checkForFontAndColors()", e);
         }

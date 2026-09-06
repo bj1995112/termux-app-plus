@@ -247,7 +247,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         setSettingsButtonView();
         setStyleButtonView();
-        setSwitchMirrorButtonView();
+        setupUbuntuAppsView();
+        applyDrawerAdaptiveTheme();
 
         setNewSessionButtonView();
 
@@ -319,7 +320,14 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         // Check if a crash happened on last run of the app or if a plugin crashed and show a
         // notification with the crash details if it did
-        TermuxCrashUtils.notifyAppCrashFromCrashLogFile(this, LOG_TAG);
+        // 实时检查样式是否被修改，若是，立即就地热重载当前终端视窗，无需新开窗口
+        if (com.termux.app.styling.TermuxStyleManager.sNeedReloadStyle) {
+            com.termux.app.styling.TermuxStyleManager.sNeedReloadStyle = false;
+            reloadActivityStyling(false);
+        }
+
+        applyDrawerAdaptiveTheme();
+        setupUbuntuAppsView();
 
         mIsOnResumeAfterOnCreate = false;
     }
@@ -581,18 +589,105 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
     }
 
-    private void setSwitchMirrorButtonView() {
-        View switchMirrorButton = findViewById(R.id.switch_mirror_button);
-        if (switchMirrorButton != null) {
-            switchMirrorButton.setOnClickListener(v -> {
-                TerminalSession currentSession = getCurrentSession();
-                if (currentSession != null && currentSession.isRunning()) {
-                    currentSession.write("termux-change-repo\n");
-                    getDrawer().closeDrawers();
-                } else {
-                    showToast(getString(R.string.action_new_session), true);
+    private void setupUbuntuAppsView() {
+        new Thread(() -> {
+            List<com.termux.app.ubuntu.UbuntuAppManager.AppItem> apps = com.termux.app.ubuntu.UbuntuAppManager.getInstalledApps(this);
+            runOnUiThread(() -> {
+                View section = findViewById(R.id.ubuntu_apps_section);
+                LinearLayout container = findViewById(R.id.ubuntu_apps_container);
+                if (section == null || container == null) return;
+
+                if (apps.isEmpty()) {
+                    section.setVisibility(View.GONE);
+                    return;
+                }
+
+                section.setVisibility(View.VISIBLE);
+                container.removeAllViews();
+
+                int padH = (int) (12 * getResources().getDisplayMetrics().density);
+                int padV = (int) (6 * getResources().getDisplayMetrics().density);
+                int marginR = (int) (8 * getResources().getDisplayMetrics().density);
+
+                for (com.termux.app.ubuntu.UbuntuAppManager.AppItem app : apps) {
+                    com.google.android.material.button.MaterialButton btn = new com.google.android.material.button.MaterialButton(this);
+                    btn.setText(app.displayName);
+                    btn.setTextSize(12);
+                    btn.setAllCaps(false);
+                    btn.setPadding(padH, padV, padH, padV);
+                    btn.setCornerRadius((int) (8 * getResources().getDisplayMetrics().density));
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        (int) (36 * getResources().getDisplayMetrics().density)
+                    );
+                    lp.rightMargin = marginR;
+                    btn.setLayoutParams(lp);
+
+                    btn.setOnClickListener(v -> {
+                        com.termux.app.ubuntu.UbuntuAppManager.launchApp(TermuxActivity.this, app);
+                    });
+
+                    container.addView(btn);
                 }
             });
+        }).start();
+    }
+
+    private void applyDrawerAdaptiveTheme() {
+        View drawer = findViewById(R.id.left_drawer);
+        if (drawer == null) return;
+
+        boolean adaptTheme = com.termux.app.styling.TermuxStyleManager.isDrawerThemeAdaptEnabled(this);
+        int fg;
+        if (adaptTheme) {
+            // 动态提取当前终端色彩
+            int[] colors = com.termux.app.styling.TermuxStyleManager.getTerminalCurrentColors(this);
+            int bg = colors[0];
+            fg = colors[1];
+            drawer.setBackgroundColor(bg);
+        } else {
+            // 恢复默认抽屉属性背景
+            android.util.TypedValue typedValue = new android.util.TypedValue();
+            if (getTheme().resolveAttribute(R.attr.termuxActivityDrawerBackground, typedValue, true)) {
+                if (typedValue.resourceId != 0) {
+                    drawer.setBackgroundResource(typedValue.resourceId);
+                } else {
+                    drawer.setBackgroundColor(typedValue.data);
+                }
+            }
+            if (getTheme().resolveAttribute(R.attr.termuxActivityDrawerImageTint, typedValue, true)) {
+                fg = typedValue.data;
+            } else {
+                fg = 0xFFFFFFFF;
+            }
+        }
+
+        ImageButton settingsBtn = findViewById(R.id.settings_button);
+        if (settingsBtn != null) {
+            if (adaptTheme) {
+                settingsBtn.setColorFilter(fg);
+            } else {
+                settingsBtn.clearColorFilter();
+            }
+        }
+
+        ImageButton styleBtn = findViewById(R.id.style_button);
+        if (styleBtn != null) {
+            if (adaptTheme) {
+                styleBtn.setColorFilter(fg);
+            } else {
+                styleBtn.clearColorFilter();
+            }
+        }
+
+        TextView appsTitle = findViewById(R.id.ubuntu_apps_title);
+        if (appsTitle != null) {
+            appsTitle.setTextColor(fg);
+        }
+
+        TextView sessionsTitle = findViewById(R.id.sessions_header_title);
+        if (sessionsTitle != null) {
+            sessionsTitle.setTextColor(fg);
         }
     }
 

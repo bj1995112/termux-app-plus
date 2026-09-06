@@ -53,6 +53,16 @@ public class TermuxStyleActivity extends AppCompatActivity {
 
         updateCurrentState();
 
+        com.google.android.material.switchmaterial.SwitchMaterial switchDrawerAdapt = findViewById(R.id.switch_drawer_theme_adapt);
+        if (switchDrawerAdapt != null) {
+            switchDrawerAdapt.setChecked(TermuxStyleManager.isDrawerThemeAdaptEnabled(this));
+            switchDrawerAdapt.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                TermuxStyleManager.setDrawerThemeAdaptEnabled(this, isChecked);
+                TermuxStyleManager.sNeedReloadStyle = true;
+                Toast.makeText(this, isChecked ? "已开启抽屉配色跟随终端" : "已恢复抽屉默认经典配色", Toast.LENGTH_SHORT).show();
+            });
+        }
+
         cardColorScheme.setOnClickListener(v -> showColorSchemeDialog());
         cardFonts.setOnClickListener(v -> showFontDialog());
         buttonReset.setOnClickListener(v -> showResetDialog());
