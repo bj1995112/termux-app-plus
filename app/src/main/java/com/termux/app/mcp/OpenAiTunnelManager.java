@@ -534,9 +534,19 @@ public class OpenAiTunnelManager {
         if (mProcess != null) {
             try {
                 mProcess.destroy();
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    mProcess.destroyForcibly();
+                }
             } catch (Exception ignored) {}
             mProcess = null;
         }
+        killStaleTunnelProcesses();
         updateState(TunnelState.STOPPED, null);
+    }
+
+    private void killStaleTunnelProcesses() {
+        try {
+            Runtime.getRuntime().exec(new String[]{"sh", "-c", "pkill -f tunnel-client 2>/dev/null || killall tunnel-client 2>/dev/null || true"});
+        } catch (Exception ignored) {}
     }
 }

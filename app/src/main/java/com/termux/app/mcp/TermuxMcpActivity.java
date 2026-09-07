@@ -1225,7 +1225,13 @@ public class TermuxMcpActivity extends AppCompatActivity {
                 String val = input.getText().toString().trim();
                 manager.setTunnelId(this, val);
                 refreshUI();
-                Toast.makeText(this, "已保存 Tunnel ID", Toast.LENGTH_SHORT).show();
+                if (manager.isRunning()) {
+                    manager.stopTunnel();
+                    manager.startTunnel(this);
+                    Toast.makeText(this, "Tunnel ID 已保存，隧道已自动重启生效", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, "已保存 Tunnel ID", Toast.LENGTH_SHORT).show();
+                }
             })
             .setNegativeButton(android.R.string.cancel, null)
             .show();
@@ -1247,7 +1253,13 @@ public class TermuxMcpActivity extends AppCompatActivity {
                 String val = input.getText().toString().trim();
                 manager.setApiKey(this, val);
                 refreshUI();
-                Toast.makeText(this, "已保存 Runtime API Key", Toast.LENGTH_SHORT).show();
+                if (manager.isRunning()) {
+                    manager.stopTunnel();
+                    manager.startTunnel(this);
+                    Toast.makeText(this, "API Key 已保存，隧道已自动重启生效", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, "已保存 Runtime API Key", Toast.LENGTH_SHORT).show();
+                }
             })
             .setNegativeButton(android.R.string.cancel, null)
             .show();
@@ -1274,7 +1286,14 @@ public class TermuxMcpActivity extends AppCompatActivity {
                 } catch (Exception ignored) {}
                 manager.setTargetPort(this, port);
                 refreshUI();
-                Toast.makeText(this, port > 0 ? ("已将转发目标端口设置为: " + port) : "已恢复默认端口 (28488)", Toast.LENGTH_SHORT).show();
+                String portDesc = port > 0 ? ("已将转发目标端口设置为: " + port) : "已恢复默认端口 (28488)";
+                if (manager.isRunning()) {
+                    manager.stopTunnel();
+                    manager.startTunnel(this);
+                    Toast.makeText(this, portDesc + "，隧道已自动重启生效", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, portDesc, Toast.LENGTH_SHORT).show();
+                }
             })
             .setNegativeButton(android.R.string.cancel, null)
             .show();
@@ -1297,10 +1316,13 @@ public class TermuxMcpActivity extends AppCompatActivity {
                 String val = input.getText().toString().trim();
                 manager.setProxy(this, val);
                 refreshUI();
-                if (val.isEmpty()) {
-                    Toast.makeText(this, "已切换为【全自动智能代理模式】", Toast.LENGTH_SHORT).show();
+                String modeDesc = val.isEmpty() ? "已切换为【全自动智能代理模式】" : "已保存指定前置代理";
+                if (manager.isRunning()) {
+                    manager.stopTunnel();
+                    manager.startTunnel(this);
+                    Toast.makeText(this, modeDesc + "，隧道已自动重启生效", Toast.LENGTH_SHORT).show();
                 } else {
-                    Toast.makeText(this, "已保存指定前置代理", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, modeDesc, Toast.LENGTH_SHORT).show();
                 }
             })
             .setNegativeButton(android.R.string.cancel, null)

@@ -41,6 +41,8 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -169,137 +171,157 @@ public class TermuxMcpServer {
         try (InputStream in = socket.getInputStream();
              OutputStream out = socket.getOutputStream()) {
 
-            // 1. 读取 HTTP 请求行
             BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
-            String requestLine = reader.readLine();
-            if (requestLine == null || requestLine.isEmpty()) {
-                return;
-            }
 
-            String[] parts = requestLine.split(" ");
-            if (parts.length < 2) return;
-            String method = parts[0].toUpperCase();
-            String fullPath = parts[1];
+            while (mRunning && !socket.isClosed()) {
+                // 设置 5 秒 Keep-Alive 空闲等待超时
+                try {
+                    socket.setSoTimeout(5000);
+                } catch (Exception ignored) {}
 
-            // 解析 Path 与 Query String
-            String path = fullPath;
-            Map<String, String> queryParams = new HashMap<>();
-            int qIdx = fullPath.indexOf('?');
-            if (qIdx != -1) {
-                path = fullPath.substring(0, qIdx);
-                String queryString = fullPath.substring(qIdx + 1);
-                for (String pair : queryString.split("&")) {
-                    int eqIdx = pair.indexOf('=');
-                    if (eqIdx != -1) {
-                        try {
-                            String key = URLDecoder.decode(pair.substring(0, eqIdx), "UTF-8");
-                            String val = URLDecoder.decode(pair.substring(eqIdx + 1), "UTF-8");
-                            queryParams.put(key, val);
-                        } catch (Exception ignored) {}
+                // 1. 读取 HTTP 请求行
+                String requestLine;
+                try {
+                    requestLine = reader.readLine();
+                } catch (SocketTimeoutException | SocketException e) {
+                    break; // 超时或客户端正常关闭连接
+                }
+                if (requestLine == null || requestLine.isEmpty()) {
+                    break;
+                }
+
+                String[] parts = requestLine.split(" ");
+                if (parts.length < 2) break;
+                String method = parts[0].toUpperCase();
+                String fullPath = parts[1];
+
+                // 解析 Path 与 Query String
+                String path = fullPath;
+                Map<String, String> queryParams = new HashMap<>();
+                int qIdx = fullPath.indexOf('?');
+                if (qIdx != -1) {
+                    path = fullPath.substring(0, qIdx);
+                    String queryString = fullPath.substring(qIdx + 1);
+                    for (String pair : queryString.split("&")) {
+                        int eqIdx = pair.indexOf('=');
+                        if (eqIdx != -1) {
+                            try {
+                                String key = URLDecoder.decode(pair.substring(0, eqIdx), "UTF-8");
+                                String val = URLDecoder.decode(pair.substring(eqIdx + 1), "UTF-8");
+                                queryParams.put(key, val);
+                            } catch (Exception ignored) {}
+                        }
                     }
                 }
-            }
 
-            // 2. 读取 Headers
-            Map<String, String> headers = new HashMap<>();
-            String headerLine;
-            int contentLength = 0;
-            while ((headerLine = reader.readLine()) != null && !headerLine.isEmpty()) {
-                int colonIdx = headerLine.indexOf(':');
-                if (colonIdx != -1) {
-                    String name = headerLine.substring(0, colonIdx).trim().toLowerCase();
-                    String value = headerLine.substring(colonIdx + 1).trim();
-                    headers.put(name, value);
-                    if ("content-length".equals(name)) {
-                        try {
-                            contentLength = Integer.parseInt(value);
-                        } catch (NumberFormatException ignored) {}
+                // 2. 读取 Headers
+                Map<String, String> headers = new HashMap<>();
+                String headerLine;
+                int contentLength = 0;
+                while ((headerLine = reader.readLine()) != null && !headerLine.isEmpty()) {
+                    int colonIdx = headerLine.indexOf(':');
+                    if (colonIdx != -1) {
+                        String name = headerLine.substring(0, colonIdx).trim().toLowerCase();
+                        String value = headerLine.substring(colonIdx + 1).trim();
+                        headers.put(name, value);
+                        if ("content-length".equals(name)) {
+                            try {
+                                contentLength = Integer.parseInt(value);
+                            } catch (NumberFormatException ignored) {}
+                        }
                     }
                 }
-            }
 
-            // 3. 处理 CORS 跨域预检请求 (OPTIONS)
-            if ("OPTIONS".equalsIgnoreCase(method)) {
-                sendCorsPreflight(out);
-                return;
-            }
-
-            // 4. 读取 HTTP Body 内容
-            String body = "";
-            if (contentLength > 0) {
-                char[] buf = new char[contentLength];
-                int totalRead = 0;
-                while (totalRead < contentLength) {
-                    int read = reader.read(buf, totalRead, contentLength - totalRead);
-                    if (read == -1) break;
-                    totalRead += read;
+                // 3. 处理 CORS 跨域预检请求 (OPTIONS)
+                if ("OPTIONS".equalsIgnoreCase(method)) {
+                    sendCorsPreflight(out);
+                    continue;
                 }
-                body = new String(buf, 0, totalRead);
-            }
 
-            // 读取完成后，解除长任务等待期间的 Socket 读取超时
-            try {
-                socket.setSoTimeout(0);
-            } catch (Exception ignored) {}
+                // 4. 读取 HTTP Body 内容
+                String body = "";
+                if (contentLength > 0) {
+                    char[] buf = new char[contentLength];
+                    int totalRead = 0;
+                    while (totalRead < contentLength) {
+                        int read = reader.read(buf, totalRead, contentLength - totalRead);
+                        if (read == -1) break;
+                        totalRead += read;
+                    }
+                    body = new String(buf, 0, totalRead);
+                }
 
-            // 5. 鉴权判断：公开端点免 Bearer 鉴权，保护端点必须通过 Token 或 OAuth 认证
-            boolean isPublicEndpoint = path.equals("/") ||
-                path.equals("/status") ||
-                path.equals("/openapi.json") ||
-                path.contains("/.well-known/") ||
-                path.startsWith("/oauth/authorize") ||
-                path.equals("/oauth/token");
+                // 读取完成后，解除长任务等待期间的 Socket 读取超时
+                try {
+                    socket.setSoTimeout(0);
+                } catch (Exception ignored) {}
 
-            if (!isPublicEndpoint && !isAuthorized(headers, queryParams)) {
-                sendUnauthorizedResponse(out);
-                return;
-            }
+                // 5. 鉴权判断：公开端点免 Bearer 鉴权，保护端点必须通过 Token 或 OAuth 认证
+                boolean isPublicEndpoint = path.equals("/") ||
+                    path.equals("/status") ||
+                    path.equals("/openapi.json") ||
+                    path.contains("/.well-known/") ||
+                    path.startsWith("/oauth/authorize") ||
+                    path.equals("/oauth/token");
 
-            // 6. 路由分发
-            if (path.equals("/mcp")) {
-                // 最新标准 Streamable HTTP 单端点 (2026 MCP 规范)
-                handleMcpPost(body, out, headers, queryParams, path);
-            } else if (path.equals("/sse") && "GET".equals(method)) {
-                // 经典 SSE 订阅端点
-                handleSseGet(out, socket);
-            } else if ((path.startsWith("/messages") || path.equals("/sse")) && "POST".equals(method)) {
-                // 经典 SSE 消息端点或直接 POST 到 /sse (支持 Streamable HTTP / MCP 双模)
-                handleMcpPost(body, out, headers, queryParams, path);
-            } else if (path.equals("/openapi.json") && "GET".equals(method)) {
-                // ChatGPT Custom GPTs Actions 专属 Schema
-                handleOpenApiSpec(headers, out);
-            } else if (path.contains("/.well-known/") && "GET".equals(method)) {
-                // OAuth 2.1 RFC 8414 / RFC 9728 发现端点 (支持根路径与 /sse/.well-known/...)
-                handleOAuthDiscovery(path, headers, out);
-            } else if (path.equals("/oauth/authorize")) {
-                // OAuth 2.1 网页授权端点
-                handleOAuthAuthorize(method, queryParams, body, out);
-            } else if (path.equals("/oauth/token") && "POST".equals(method)) {
-                // OAuth 2.1 Token 交换端点
-                handleOAuthToken(headers, body, out);
-            } else if (path.equals("/api/execute") && "POST".equals(method)) {
-                // ChatGPT REST 命令执行端点
-                handleRestExecute(body, out);
-            } else if (path.equals("/api/system") && "GET".equals(method)) {
-                // ChatGPT REST 系统状态端点
-                handleRestSystem(out);
-            } else if (path.equals("/api/clipboard")) {
-                handleRestClipboard(method, body, out);
-            } else if (path.equals("/api/torch") && "POST".equals(method)) {
-                handleRestTorch(body, out);
-            } else if (path.equals("/api/tts") && "POST".equals(method)) {
-                handleRestTts(body, out);
-            } else if (path.equals("/api/toast") && "POST".equals(method)) {
-                handleRestToast(body, out);
-            } else if (path.equals("/api/open-url") && "POST".equals(method)) {
-                handleRestOpenUrl(body, out);
-            } else if (path.equals("/api/download") && "POST".equals(method)) {
-                handleRestDownload(body, out);
-            } else if (path.equals("/") || path.equals("/status")) {
-                // 健康检查与状态展示
-                handleStatus(out);
-            } else {
-                sendJsonResponse(out, 404, "{\"error\": \"Not Found\"}");
+                if (!isPublicEndpoint && !isAuthorized(headers, queryParams)) {
+                    sendUnauthorizedResponse(out);
+                    break;
+                }
+
+                // 6. 路由分发
+                if (path.equals("/mcp")) {
+                    // 最新标准 Streamable HTTP 单端点 (2026 MCP 规范)
+                    handleMcpPost(body, out, headers, queryParams, path);
+                } else if (path.equals("/sse") && "GET".equals(method)) {
+                    // 经典 SSE 订阅端点（接管长连接直到客户端断开）
+                    handleSseGet(out, socket);
+                    break;
+                } else if ((path.startsWith("/messages") || path.equals("/sse")) && "POST".equals(method)) {
+                    // 经典 SSE 消息端点或直接 POST 到 /sse (支持 Streamable HTTP / MCP 双模)
+                    handleMcpPost(body, out, headers, queryParams, path);
+                } else if (path.equals("/openapi.json") && "GET".equals(method)) {
+                    // ChatGPT Custom GPTs Actions 专属 Schema
+                    handleOpenApiSpec(headers, out);
+                } else if (path.contains("/.well-known/") && "GET".equals(method)) {
+                    // OAuth 2.1 RFC 8414 / RFC 9728 发现端点 (支持根路径与 /sse/.well-known/...)
+                    handleOAuthDiscovery(path, headers, out);
+                } else if (path.equals("/oauth/authorize")) {
+                    // OAuth 2.1 网页授权端点
+                    handleOAuthAuthorize(method, queryParams, body, out);
+                } else if (path.equals("/oauth/token") && "POST".equals(method)) {
+                    // OAuth 2.1 Token 交换端点
+                    handleOAuthToken(headers, body, out);
+                } else if (path.equals("/api/execute") && "POST".equals(method)) {
+                    // ChatGPT REST 命令执行端点
+                    handleRestExecute(body, out);
+                } else if (path.equals("/api/system") && "GET".equals(method)) {
+                    // ChatGPT REST 系统状态端点
+                    handleRestSystem(out);
+                } else if (path.equals("/api/clipboard")) {
+                    handleRestClipboard(method, body, out);
+                } else if (path.equals("/api/torch") && "POST".equals(method)) {
+                    handleRestTorch(body, out);
+                } else if (path.equals("/api/tts") && "POST".equals(method)) {
+                    handleRestTts(body, out);
+                } else if (path.equals("/api/toast") && "POST".equals(method)) {
+                    handleRestToast(body, out);
+                } else if (path.equals("/api/open-url") && "POST".equals(method)) {
+                    handleRestOpenUrl(body, out);
+                } else if (path.equals("/api/download") && "POST".equals(method)) {
+                    handleRestDownload(body, out);
+                } else if (path.equals("/") || path.equals("/status")) {
+                    // 健康检查与状态展示
+                    handleStatus(out);
+                } else {
+                    sendJsonResponse(out, 404, "{\"error\": \"Not Found\"}");
+                }
+
+                // 客户端若要求关闭连接，则跳出循环
+                String connHeader = headers.get("connection");
+                if ("close".equalsIgnoreCase(connHeader)) {
+                    break;
+                }
             }
 
         } catch (Exception e) {
@@ -442,7 +464,7 @@ public class TermuxMcpServer {
             if (path != null && path.contains("oauth-protected-resource")) {
                 // RFC 9728 OAuth 2.0 Protected Resource Metadata
                 JSONObject resMeta = new JSONObject();
-                resMeta.put("resource", baseUrl);
+                resMeta.put("resource", baseUrl + "/mcp");
                 resMeta.put("authorization_servers", new JSONArray().put(baseUrl));
                 resMeta.put("scopes_supported", new JSONArray().put("execute").put("read").put("system"));
                 resMeta.put("bearer_methods_supported", new JSONArray().put("header"));
