@@ -64,6 +64,7 @@ public class TermuxMcpActivity extends AppCompatActivity {
     private TextView mTvOpenAiStatus;
     private TextView mTvOpenAiTunnelId;
     private TextView mTvOpenAiApiKey;
+    private TextView mTvOpenAiTargetPort;
     private TextView mTvOpenAiProxy;
 
     private int mTextColorPrimary;
@@ -671,6 +672,57 @@ public class TermuxMcpActivity extends AppCompatActivity {
 
         addDivider(openAiLayout, density);
 
+        // 转发目标端口行 (选填 · 默认 28488)
+        LinearLayout portHeaderRow = new LinearLayout(this);
+        portHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
+        portHeaderRow.setGravity(Gravity.CENTER_VERTICAL);
+        portHeaderRow.setPadding(0, (int) (4 * density), 0, 0);
+
+        LinearLayout portTextCol = new LinearLayout(this);
+        portTextCol.setOrientation(LinearLayout.VERTICAL);
+        portTextCol.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
+
+        TextView tvTargetPortLabel = new TextView(this);
+        tvTargetPortLabel.setText("转发目标 MCP 端口 (默认 28488)");
+        tvTargetPortLabel.setTextSize(14);
+        tvTargetPortLabel.setTypeface(null, Typeface.BOLD);
+        tvTargetPortLabel.setTextColor(mTextColorPrimary);
+        portTextCol.addView(tvTargetPortLabel);
+
+        TextView tvTargetPortHint = new TextView(this);
+        tvTargetPortHint.setText("默认转发给 Termux+ 内置服务 (28488)，亦可切换为本地其他服务 (如 3100)");
+        tvTargetPortHint.setTextSize(12);
+        tvTargetPortHint.setTextColor(mTextColorSecondary);
+        portTextCol.addView(tvTargetPortHint);
+        portHeaderRow.addView(portTextCol);
+        openAiLayout.addView(portHeaderRow);
+
+        mTvOpenAiTargetPort = new TextView(this);
+        mTvOpenAiTargetPort.setTextSize(13);
+        mTvOpenAiTargetPort.setTypeface(Typeface.MONOSPACE);
+        mTvOpenAiTargetPort.setTextColor(0xFF009688);
+        mTvOpenAiTargetPort.setBackgroundColor(0x15009688);
+        mTvOpenAiTargetPort.setPadding((int) (12 * density), (int) (8 * density), (int) (12 * density), (int) (8 * density));
+        LinearLayout.LayoutParams lpTargetPort = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lpTargetPort.topMargin = (int) (6 * density);
+        lpTargetPort.bottomMargin = (int) (6 * density);
+        mTvOpenAiTargetPort.setLayoutParams(lpTargetPort);
+        mTvOpenAiTargetPort.setOnClickListener(v -> showEditOpenAiTargetPortDialog());
+        openAiLayout.addView(mTvOpenAiTargetPort);
+
+        LinearLayout targetPortBtnRow = new LinearLayout(this);
+        targetPortBtnRow.setOrientation(LinearLayout.HORIZONTAL);
+        targetPortBtnRow.setGravity(Gravity.END);
+
+        MaterialButton btnEditTargetPort = new MaterialButton(this);
+        btnEditTargetPort.setText("修改端口");
+        btnEditTargetPort.setTextSize(11);
+        btnEditTargetPort.setOnClickListener(v -> showEditOpenAiTargetPortDialog());
+        targetPortBtnRow.addView(btnEditTargetPort);
+        openAiLayout.addView(targetPortBtnRow);
+
+        addDivider(openAiLayout, density);
+
         // 前置代理行 (选填)
         LinearLayout proxyHeaderRow = new LinearLayout(this);
         proxyHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -1117,6 +1169,14 @@ public class TermuxMcpActivity extends AppCompatActivity {
             mTvOpenAiApiKey.setText(apiKey.length() > 8 ? (apiKey.substring(0, 4) + "••••••••" + apiKey.substring(apiKey.length() - 4)) : "••••••••");
         }
 
+        int targetPort = openAiMgr.getTargetPort(this);
+        int defaultPort = TermuxMcpManager.getInstance().getPort(this);
+        if (targetPort <= 0 || targetPort == defaultPort) {
+            mTvOpenAiTargetPort.setText(defaultPort + " (默认 · Termux+ 内置原生服务)");
+        } else {
+            mTvOpenAiTargetPort.setText(targetPort + " (自定义外部服务)");
+        }
+
         String proxy = openAiMgr.getProxy(this);
         mTvOpenAiProxy.setText(proxy.isEmpty() ? "（全自动智能嗅探模式 · 自动对接 v2rayNG / Clash，无需配置）" : proxy);
     }
@@ -1188,6 +1248,33 @@ public class TermuxMcpActivity extends AppCompatActivity {
                 manager.setApiKey(this, val);
                 refreshUI();
                 Toast.makeText(this, "已保存 Runtime API Key", Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showEditOpenAiTargetPortDialog() {
+        OpenAiTunnelManager manager = OpenAiTunnelManager.getInstance();
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_NUMBER);
+        int curr = manager.getTargetPort(this);
+        input.setText(curr > 0 ? String.valueOf(curr) : "");
+        input.setHint("默认 28488（或填入 3100 等）");
+        input.setSelectAllOnFocus(true);
+
+        new AlertDialog.Builder(this)
+            .setTitle("配置隧道转发目标端口")
+            .setMessage("OpenAI 隧道默认将请求转发给手机内置原生 MCP 服务（28488 端口）。\n\n若您在手机后台运行了其他 MCP 脚本（例如 3100 端口的 Node.js/Python 服务），可在此指定目标端口。留空或填 0 恢复默认：")
+            .setView(input)
+            .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                String val = input.getText().toString().trim();
+                int port = 0;
+                try {
+                    if (!val.isEmpty()) port = Integer.parseInt(val);
+                } catch (Exception ignored) {}
+                manager.setTargetPort(this, port);
+                refreshUI();
+                Toast.makeText(this, port > 0 ? ("已将转发目标端口设置为: " + port) : "已恢复默认端口 (28488)", Toast.LENGTH_SHORT).show();
             })
             .setNegativeButton(android.R.string.cancel, null)
             .show();

@@ -258,14 +258,13 @@ public class TermuxMcpServer {
             // 6. 路由分发
             if (path.equals("/mcp")) {
                 // 最新标准 Streamable HTTP 单端点 (2026 MCP 规范)
-                handleMcpPost(body, out, null, path);
+                handleMcpPost(body, out, headers, queryParams, path);
             } else if (path.equals("/sse") && "GET".equals(method)) {
                 // 经典 SSE 订阅端点
                 handleSseGet(out, socket);
             } else if ((path.startsWith("/messages") || path.equals("/sse")) && "POST".equals(method)) {
                 // 经典 SSE 消息端点或直接 POST 到 /sse (支持 Streamable HTTP / MCP 双模)
-                String sessionId = queryParams.get("sessionId");
-                handleMcpPost(body, out, sessionId, path);
+                handleMcpPost(body, out, headers, queryParams, path);
             } else if (path.equals("/openapi.json") && "GET".equals(method)) {
                 // ChatGPT Custom GPTs Actions 专属 Schema
                 handleOpenApiSpec(headers, out);
@@ -710,11 +709,22 @@ public class TermuxMcpServer {
     /**
      * 处理 MCP JSON-RPC 2.0 请求（同时支持 Streamable HTTP POST 与 SSE 消息通道）
      */
-    private void handleMcpPost(String body, OutputStream out, String sessionId, String path) throws IOException {
+    private void handleMcpPost(String body, OutputStream out, Map<String, String> headers, Map<String, String> queryParams, String path) throws IOException {
         if (body == null || body.trim().isEmpty()) {
             sendJsonResponse(out, 400, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32700,\"message\":\"Parse error: Empty body\"}}");
             return;
         }
+
+        String sessionId = headers != null ? headers.get("mcp-session-id") : null;
+        if ((sessionId == null || sessionId.isEmpty()) && queryParams != null) {
+            sessionId = queryParams.get("sessionId");
+        }
+        if (sessionId == null || sessionId.isEmpty()) {
+            sessionId = UUID.randomUUID().toString();
+        }
+
+        String accept = headers != null ? headers.get("accept") : "";
+        boolean clientWantsSse = accept != null && accept.contains("text/event-stream");
 
         try {
             JSONObject req = new JSONObject(body);
@@ -852,9 +862,32 @@ public class TermuxMcpServer {
                 }
             }
 
-            // 3. 对于当前 HTTP POST 请求连接本身：
-            //    同时也返回 200 OK 附带完整响应 JSON（兼容 Streamable HTTP 客户端与直连解析 POST Body 的客户端）
-            sendJsonResponse(out, 200, resp.toString());
+            // 3. 对于当前 HTTP POST 请求连接本身的响应：
+            //    若客户端请求头声明接收 text/event-stream (如 ChatGPT 官方 MCP 客户端)，返回 SSE 帧与 Mcp-Session-Id
+            if (clientWantsSse) {
+                String sseData = "event: message\r\ndata: " + resp.toString() + "\r\n\r\n";
+                byte[] rawBytes = sseData.getBytes(StandardCharsets.UTF_8);
+                String respHeader = "HTTP/1.1 200 OK\r\n" +
+                    "Content-Type: text/event-stream\r\n" +
+                    "Cache-Control: no-cache, no-transform\r\n" +
+                    "Connection: keep-alive\r\n" +
+                    "Mcp-Session-Id: " + sessionId + "\r\n" +
+                    "Access-Control-Allow-Origin: *\r\n" +
+                    "Content-Length: " + rawBytes.length + "\r\n\r\n";
+                out.write(respHeader.getBytes(StandardCharsets.UTF_8));
+                out.write(rawBytes);
+                out.flush();
+            } else {
+                byte[] rawBytes = resp.toString().getBytes(StandardCharsets.UTF_8);
+                String respHeader = "HTTP/1.1 200 OK\r\n" +
+                    "Content-Type: application/json; charset=utf-8\r\n" +
+                    "Mcp-Session-Id: " + sessionId + "\r\n" +
+                    "Access-Control-Allow-Origin: *\r\n" +
+                    "Content-Length: " + rawBytes.length + "\r\n\r\n";
+                out.write(respHeader.getBytes(StandardCharsets.UTF_8));
+                out.write(rawBytes);
+                out.flush();
+            }
 
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Error processing MCP request", e);

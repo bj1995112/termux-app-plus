@@ -48,6 +48,7 @@ public class OpenAiTunnelManager {
     public static final String PREF_KEY_TUNNEL_ID = "mcp_openai_tunnel_id";
     public static final String PREF_KEY_API_KEY = "mcp_openai_api_key";
     public static final String PREF_KEY_PROXY = "mcp_openai_proxy";
+    public static final String PREF_KEY_TARGET_PORT = "mcp_openai_target_port";
 
     public enum TunnelState {
         STOPPED("未运行"),
@@ -145,6 +146,14 @@ public class OpenAiTunnelManager {
 
     public void setProxy(Context context, String proxy) {
         getPrefs(context).edit().putString(PREF_KEY_PROXY, proxy != null ? proxy.trim() : "").apply();
+    }
+
+    public int getTargetPort(Context context) {
+        return getPrefs(context).getInt(PREF_KEY_TARGET_PORT, 0);
+    }
+
+    public void setTargetPort(Context context, int port) {
+        getPrefs(context).edit().putInt(PREF_KEY_TARGET_PORT, port).apply();
     }
 
     public TunnelState getState() {
@@ -350,23 +359,28 @@ public class OpenAiTunnelManager {
         }
 
         File binFile = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH, "tunnel-client");
-        int mcpPort = TermuxMcpManager.getInstance().getPort(context);
+        int targetPort = getTargetPort(context);
+        if (targetPort <= 0) {
+            targetPort = TermuxMcpManager.getInstance().getPort(context);
+        }
 
         List<String> cmd = new ArrayList<>();
         cmd.add(binFile.getAbsolutePath());
         cmd.add("run");
         cmd.add("--control-plane.tunnel-id");
         cmd.add(tunnelId);
-        // 关键点 1：OpenAI 官方规范要求声明 channel=main
+        // 标准直接 URL 格式，与成功命令完全一致
         cmd.add("--mcp.server-url");
-        cmd.add("url=http://127.0.0.1:" + mcpPort + "/mcp,channel=main");
+        cmd.add("http://127.0.0.1:" + targetPort + "/mcp");
         cmd.add("--health.listen-addr");
         cmd.add("127.0.0.1:0"); // 自动分配随机空闲健康端口
 
-        // 关键点 2：自动带上本地 MCP 的 Bearer 认证 Token
-        String authToken = TermuxMcpManager.getInstance().getToken(context);
+        // 自动带上对应的 Bearer 认证 Token (同时为常规请求与 discovery 探测注入)
+        String authToken = (targetPort == 3100) ? "bj1995112@." : TermuxMcpManager.getInstance().getToken(context);
         if (authToken != null && !authToken.trim().isEmpty()) {
             cmd.add("--mcp.extra-headers");
+            cmd.add("Authorization: Bearer " + authToken.trim());
+            cmd.add("--mcp.discovery-extra-headers");
             cmd.add("Authorization: Bearer " + authToken.trim());
         }
 
@@ -437,6 +451,7 @@ public class OpenAiTunnelManager {
 
         mLogBuffer.clear();
         appendLog("[Termux+] 🚀 正在启动 OpenAI 官方原生安全隧道...");
+        appendLog("[Termux+] 🎯 转发目标 MCP: http://127.0.0.1:" + targetPort + "/mcp");
         if (caBundle != null && caBundle.exists()) {
             appendLog("[Termux+] 🔐 已挂载 CA 根证书: " + caBundle.getName() + " (" + (caBundle.length() / 1024) + " KB)");
         }
