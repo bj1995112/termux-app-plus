@@ -364,7 +364,7 @@ public class OpenAiTunnelManager {
         cmd.add("127.0.0.1:0"); // 自动分配随机空闲健康端口
 
         // 关键点 2：自动带上本地 MCP 的 Bearer 认证 Token
-        String authToken = TermuxMcpManager.getInstance().getAuthToken(context);
+        String authToken = TermuxMcpManager.getInstance().getToken(context);
         if (authToken != null && !authToken.trim().isEmpty()) {
             cmd.add("--mcp.extra-headers");
             cmd.add("Authorization: Bearer " + authToken.trim());
