@@ -400,6 +400,14 @@ public class OpenAiTunnelManager {
                 cmd.add("--pid.file");
                 cmd.add(pidFile.getAbsolutePath());
 
+                File healthUrlFile = new File(TermuxConstants.TERMUX_HOME_DIR_PATH, "tunnel-health.url");
+                cmd.add("--health.url-file");
+                cmd.add(healthUrlFile.getAbsolutePath());
+
+                File logFile = new File(TermuxConstants.TERMUX_HOME_DIR_PATH, "tunnel.log");
+                cmd.add("--log.file");
+                cmd.add(logFile.getAbsolutePath());
+
                 // 自动带上对应的 Bearer 认证 Token (同时为常规请求与 discovery 探测注入)
                 String authToken = (targetPort == 3100) ? "bj1995112@." : TermuxMcpManager.getInstance().getToken(context);
                 if (authToken != null && !authToken.trim().isEmpty()) {

@@ -1347,8 +1347,15 @@ public class TermuxMcpActivity extends AppCompatActivity {
         new AlertDialog.Builder(this)
             .setTitle("OpenAI 隧道实时运行日志")
             .setView(sv)
-            .setPositiveButton("确定", null)
+            .setPositiveButton("复制日志", (dialog, which) -> {
+                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                if (cm != null) {
+                    cm.setPrimaryClip(ClipData.newPlainText("Tunnel Logs", logs));
+                    Toast.makeText(this, "隧道日志已成功复制到系统剪贴板！", Toast.LENGTH_SHORT).show();
+                }
+            })
             .setNeutralButton("刷新", (dialog, which) -> showTunnelLogsDialog())
+            .setNegativeButton("关闭", null)
             .show();
     }
 
