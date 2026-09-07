@@ -1,39 +1,24 @@
 package com.termux.app.mcp;
 
-import android.app.ActivityManager;
-import android.app.Notification;
-import android.app.NotificationManager;
-import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
-import android.hardware.camera2.CameraManager;
-import android.net.Uri;
-import android.os.BatteryManager;
-import android.os.Build;
-import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.StatFs;
-import android.os.Vibrator;
-import android.speech.tts.TextToSpeech;
 import android.util.Base64;
-import android.widget.Toast;
 
-import com.termux.R;
+import com.termux.app.mcp.tools.ClipboardTools;
+import com.termux.app.mcp.tools.DeviceHardwareTools;
+import com.termux.app.mcp.tools.McpTool;
+import com.termux.app.mcp.tools.NetworkTools;
+import com.termux.app.mcp.tools.ShellTool;
+import com.termux.app.mcp.tools.SystemInfoTool;
+import com.termux.app.mcp.tools.ToolRegistry;
 import com.termux.shared.logger.Logger;
-import com.termux.shared.notification.NotificationUtils;
 import com.termux.shared.termux.TermuxConstants;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -47,17 +32,14 @@ import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.FutureTask;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -135,7 +117,14 @@ public class TermuxMcpServer {
         // 绑定 0.0.0.0，允许 Wi-Fi 局域网及穿透外网连接
         mServerSocket.bind(new InetSocketAddress("0.0.0.0", mPort));
         mRunning = true;
-        mThreadPool = Executors.newCachedThreadPool();
+        // 有界线程池，防止并发堆积耗尽系统资源与 OOM
+        mThreadPool = new ThreadPoolExecutor(
+            8,
+            32,
+            60L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(128),
+            new ThreadPoolExecutor.CallerRunsPolicy()
+        );
 
         Logger.logInfo(LOG_TAG, "TermuxMcpServer started on port " + mPort);
 
@@ -172,6 +161,7 @@ public class TermuxMcpServer {
         mSessions.clear();
         mAuthCodes.clear();
         mOAuthTokens.clear();
+        DeviceHardwareTools.releaseTts();
         Logger.logInfo(LOG_TAG, "TermuxMcpServer stopped.");
     }
 
@@ -922,7 +912,7 @@ public class TermuxMcpServer {
 
                 case "tools/list":
                     JSONObject listResult = new JSONObject();
-                    listResult.put("tools", getMcpToolsDefinition());
+                    listResult.put("tools", ToolRegistry.getInstance().getMcpToolsDefinition(mContext));
                     resp.put("result", listResult);
                     break;
 
@@ -932,7 +922,7 @@ public class TermuxMcpServer {
                     JSONObject arguments = params != null ? params.optJSONObject("arguments") : new JSONObject();
                     if (arguments == null) arguments = new JSONObject();
 
-                    JSONObject callResult = executeMcpTool(toolName, arguments);
+                    JSONObject callResult = ToolRegistry.getInstance().executeTool(toolName, arguments, mContext);
                     resp.put("result", callResult);
                     break;
 
@@ -1112,711 +1102,6 @@ public class TermuxMcpServer {
     /**
      * 构建符合 JSON Schema 规范的 inputSchema
      */
-    private JSONObject createToolSchema(JSONObject properties, String[] requiredFields) throws Exception {
-        JSONObject schema = new JSONObject();
-        schema.put("type", "object");
-        schema.put("properties", properties != null ? properties : new JSONObject());
-        if (requiredFields != null && requiredFields.length > 0) {
-            JSONArray req = new JSONArray();
-            for (String field : requiredFields) {
-                req.put(field);
-            }
-            schema.put("required", req);
-        }
-        return schema;
-    }
-
-    private JSONObject wrapTool(String name, String description, JSONObject inputSchema) throws Exception {
-        JSONObject tool = new JSONObject();
-        tool.put("name", name);
-        tool.put("description", description);
-        tool.put("inputSchema", inputSchema != null ? inputSchema : createToolSchema(new JSONObject(), null));
-        JSONObject exec = new JSONObject();
-        exec.put("taskSupport", "forbidden");
-        tool.put("execution", exec);
-        return tool;
-    }
-
-    /**
-     * 获取对外暴露的 MCP 标准工具定义（受手机端独立开关动态控制）
-     */
-    private JSONArray getMcpToolsDefinition() throws Exception {
-        JSONArray tools = new JSONArray();
-        TermuxMcpManager mgr = TermuxMcpManager.getInstance();
-
-        // 1. execute_command & shell (兼容标准 Node MCP 工具名)
-        if (mgr.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_EXEC_CMD)) {
-            JSONObject pExec = new JSONObject();
-            JSONObject pc = new JSONObject();
-            pc.put("type", "string");
-            pc.put("description", "要执行的 Shell 命令行指令");
-            pExec.put("command", pc);
-            JSONObject pcwd = new JSONObject();
-            pcwd.put("type", "string");
-            pcwd.put("description", "工作路径（可选，默认 Termux 用户家目录）");
-            pExec.put("cwd", pcwd);
-            JSONObject pto = new JSONObject();
-            pto.put("type", "integer");
-            pto.put("description", "超时毫秒数（可选，默认 30000 毫秒）");
-            pExec.put("timeout_ms", pto);
-
-            JSONObject execSchema = createToolSchema(pExec, new String[]{"command"});
-            tools.put(wrapTool("execute_command", "在手机 Termux+ 终端环境中执行 Shell 命令，返回回显与退出码。", execSchema));
-            tools.put(wrapTool("shell", "Execute Termux command (host env).", execSchema));
-        }
-
-        // 2. read_file, write_file, list_directory
-        if (mgr.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_FILE_OPS)) {
-            JSONObject pRead = new JSONObject();
-            JSONObject prp = new JSONObject();
-            prp.put("type", "string");
-            prp.put("description", "文件绝对路径（如 /data/data/com.termux/files/home/...）");
-            pRead.put("path", prp);
-            tools.put(wrapTool("read_file", "读取手机中的指定文本文件内容。", createToolSchema(pRead, new String[]{"path"})));
-
-            JSONObject pWrite = new JSONObject();
-            JSONObject pwp = new JSONObject();
-            pwp.put("type", "string");
-            pwp.put("description", "目标文件绝对路径");
-            pWrite.put("path", pwp);
-            JSONObject pwc = new JSONObject();
-            pwc.put("type", "string");
-            pwc.put("description", "写入内容文本");
-            pWrite.put("content", pwc);
-            JSONObject pwa = new JSONObject();
-            pwa.put("type", "boolean");
-            pwa.put("description", "是否为追加模式（默认 false 为全量覆写）");
-            pWrite.put("append", pwa);
-            tools.put(wrapTool("write_file", "向手机中写入或修改文件内容。", createToolSchema(pWrite, new String[]{"path", "content"})));
-
-            JSONObject pList = new JSONObject();
-            JSONObject plp = new JSONObject();
-            plp.put("type", "string");
-            plp.put("description", "文件夹路径（默认 Termux 家目录）");
-            pList.put("path", plp);
-            tools.put(wrapTool("list_directory", "列出手机指定文件夹的文件与子目录列表。", createToolSchema(pList, null)));
-        }
-
-        // 3. get_system_info & system
-        if (mgr.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_SYSTEM_INFO)) {
-            JSONObject pSys = new JSONObject();
-            JSONObject ps = new JSONObject();
-            ps.put("type", "string");
-            ps.put("description", "all|memory|cpu|disk|battery|temp|ip");
-            pSys.put("section", ps);
-            JSONObject sysSchema = createToolSchema(pSys, null);
-            tools.put(wrapTool("get_system_info", "查询手机硬件型号、Android 版本、可用运存、存储剩余及电池状态。", sysSchema));
-            tools.put(wrapTool("system", "View system info (memory/cpu/disk/battery/temp/ip)", sysSchema));
-        }
-
-        // 4. get_clipboard & set_clipboard
-        if (mgr.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_CLIPBOARD)) {
-            tools.put(wrapTool("get_clipboard", "读取手机 Android 系统剪贴板中当前保存的文本内容。", createToolSchema(new JSONObject(), null)));
-
-            JSONObject pSetClip = new JSONObject();
-            JSONObject pct = new JSONObject();
-            pct.put("type", "string");
-            pct.put("description", "要复制到剪贴板的文字内容");
-            pSetClip.put("text", pct);
-            tools.put(wrapTool("set_clipboard", "向手机 Android 系统剪贴板写入文本内容，方便用户在手机上直接粘贴。", createToolSchema(pSetClip, new String[]{"text"})));
-        }
-
-        // 5. termux_torch
-        if (mgr.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_TORCH)) {
-            JSONObject pTorch = new JSONObject();
-            JSONObject pte = new JSONObject();
-            pte.put("type", "boolean");
-            pte.put("description", "true 为开启手电筒，false 为关闭手电筒");
-            pTorch.put("enabled", pte);
-            tools.put(wrapTool("termux_torch", "控制开启或关闭手机后置闪光灯/手电筒。", createToolSchema(pTorch, new String[]{"enabled"})));
-        }
-
-        // 6. termux_tts_speak
-        if (mgr.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_TTS)) {
-            JSONObject pTts = new JSONObject();
-            JSONObject ptt = new JSONObject();
-            ptt.put("type", "string");
-            ptt.put("description", "要朗读的文本字符串");
-            pTts.put("text", ptt);
-            tools.put(wrapTool("termux_tts_speak", "通过手机扬声器使用语音合成(TTS)直接朗读指定文本内容。", createToolSchema(pTts, new String[]{"text"})));
-        }
-
-        // 7. termux_notify, termux_vibrate, termux_toast
-        if (mgr.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_FEEDBACK)) {
-            JSONObject pNoti = new JSONObject();
-            JSONObject pnt = new JSONObject();
-            pnt.put("type", "string");
-            pnt.put("description", "通知标题");
-            pNoti.put("title", pnt);
-            JSONObject pnc = new JSONObject();
-            pnc.put("type", "string");
-            pnc.put("description", "通知正文内容");
-            pNoti.put("content", pnc);
-            tools.put(wrapTool("termux_notify", "在手机 Android 状态栏弹出一条系统通知提醒。", createToolSchema(pNoti, new String[]{"content"})));
-
-            JSONObject pToast = new JSONObject();
-            JSONObject ptm = new JSONObject();
-            ptm.put("type", "string");
-            ptm.put("description", "浮动气泡展示的文字内容");
-            pToast.put("message", ptm);
-            tools.put(wrapTool("termux_toast", "在手机屏幕中央弹出一个轻量的浮动气泡提示(Toast)。", createToolSchema(pToast, new String[]{"message"})));
-
-            JSONObject pVib = new JSONObject();
-            JSONObject pvd = new JSONObject();
-            pvd.put("type", "integer");
-            pvd.put("description", "震动时长（毫秒，默认 500）");
-            pVib.put("duration_ms", pvd);
-            tools.put(wrapTool("termux_vibrate", "让手机震动指定时长。", createToolSchema(pVib, null)));
-        }
-
-        // 8. open_url
-        if (mgr.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_OPEN_URL)) {
-            JSONObject pUrl = new JSONObject();
-            JSONObject pu = new JSONObject();
-            pu.put("type", "string");
-            pu.put("description", "要打开的网页 URL（如 https://...）");
-            pUrl.put("url", pu);
-            tools.put(wrapTool("open_url", "在手机系统默认浏览器中打开指定网页链接。", createToolSchema(pUrl, new String[]{"url"})));
-        }
-
-        // 9. download_file
-        if (mgr.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_DOWNLOAD)) {
-            JSONObject pDown = new JSONObject();
-            JSONObject pdu = new JSONObject();
-            pdu.put("type", "string");
-            pdu.put("description", "文件网络下载直链 URL");
-            pDown.put("url", pdu);
-            JSONObject pdd = new JSONObject();
-            pdd.put("type", "string");
-            pdd.put("description", "手机端保存路径（可选，默认 /sdcard/Download/文件名）");
-            pDown.put("dest_path", pdd);
-            tools.put(wrapTool("download_file", "从互联网极速下载文件并保存至手机指定路径（默认 Download 目录）。", createToolSchema(pDown, new String[]{"url"})));
-        }
-
-        return tools;
-    }
-
-    private boolean isToolAllowed(String toolName) {
-        TermuxMcpManager manager = TermuxMcpManager.getInstance();
-        switch (toolName) {
-            case "execute_command":
-            case "shell":
-                return manager.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_EXEC_CMD);
-            case "read_file":
-            case "write_file":
-            case "list_directory":
-            case "file":
-                return manager.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_FILE_OPS);
-            case "get_system_info":
-            case "system":
-                return manager.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_SYSTEM_INFO);
-            case "get_clipboard":
-            case "set_clipboard":
-                return manager.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_CLIPBOARD);
-            case "termux_torch":
-                return manager.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_TORCH);
-            case "termux_tts_speak":
-                return manager.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_TTS);
-            case "termux_notify":
-            case "termux_vibrate":
-            case "termux_toast":
-                return manager.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_FEEDBACK);
-            case "open_url":
-                return manager.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_OPEN_URL);
-            case "download_file":
-                return manager.isToolEnabled(mContext, TermuxMcpManager.PREF_KEY_TOOL_DOWNLOAD);
-            default:
-                return true;
-        }
-    }
-
-    /**
-     * 核心工具执行器
-     */
-    private JSONObject executeMcpTool(String toolName, JSONObject args) {
-        JSONObject result = new JSONObject();
-        JSONArray content = new JSONArray();
-        boolean isError = false;
-        String textOutput = "";
-
-        if (!isToolAllowed(toolName)) {
-            try {
-                JSONObject textObj = new JSONObject();
-                textObj.put("type", "text");
-                textObj.put("text", "权限拒绝：该工具 [" + toolName + "] 已被用户在手机端设置中关闭！");
-                content.put(textObj);
-                result.put("content", content);
-                result.put("isError", true);
-            } catch (Exception ignored) {}
-            return result;
-        }
-
-        try {
-            switch (toolName) {
-                case "execute_command":
-                case "shell": {
-                    String command = args.optString("command", "");
-                    if (command.isEmpty() && args.has("cmd")) {
-                        command = args.optString("cmd", "");
-                    }
-                    String cwd = args.optString("cwd", TermuxConstants.TERMUX_HOME_DIR_PATH);
-                    int defaultTimeoutMs = TermuxMcpManager.getInstance().getExecTimeoutSec(mContext) * 1000;
-                    int timeout = args.optInt("timeout_ms", defaultTimeoutMs);
-                    textOutput = runShellCommand(command, cwd, timeout);
-                    break;
-                }
-                case "file": {
-                    String action = args.optString("action", "read");
-                    String path = args.optString("path", TermuxConstants.TERMUX_HOME_DIR_PATH);
-                    if ("write".equalsIgnoreCase(action) || "append".equalsIgnoreCase(action)) {
-                        String contentStr = args.optString("content", "");
-                        boolean append = "append".equalsIgnoreCase(action);
-                        textOutput = writeFileContent(path, contentStr, append);
-                    } else if ("list".equalsIgnoreCase(action)) {
-                        textOutput = listDirectory(path);
-                    } else {
-                        textOutput = readFileContent(path);
-                    }
-                    break;
-                }
-                case "read_file": {
-                    String path = args.optString("path", "");
-                    textOutput = readFileContent(path);
-                    break;
-                }
-                case "write_file": {
-                    String path = args.optString("path", "");
-                    String fileContent = args.optString("content", "");
-                    boolean append = args.optBoolean("append", false);
-                    textOutput = writeFileContent(path, fileContent, append);
-                    break;
-                }
-                case "list_directory": {
-                    String path = args.optString("path", TermuxConstants.TERMUX_HOME_DIR_PATH);
-                    textOutput = listDirectory(path);
-                    break;
-                }
-                case "get_system_info":
-                case "system": {
-                    textOutput = getSystemStatusJson();
-                    break;
-                }
-                case "get_clipboard": {
-                    textOutput = getClipboardContent();
-                    break;
-                }
-                case "set_clipboard": {
-                    String text = args.optString("text", "");
-                    textOutput = setClipboardContent(text);
-                    break;
-                }
-                case "termux_torch": {
-                    boolean enabled = args.optBoolean("enabled", true);
-                    textOutput = toggleTorch(enabled);
-                    break;
-                }
-                case "termux_tts_speak": {
-                    String text = args.optString("text", "");
-                    textOutput = speakTts(text);
-                    break;
-                }
-                case "termux_toast": {
-                    String msg = args.optString("message", "");
-                    textOutput = showToast(msg);
-                    break;
-                }
-                case "termux_notify": {
-                    String title = args.optString("title", "Termux+ MCP 提醒");
-                    String msg = args.optString("content", "");
-                    textOutput = postNotification(title, msg);
-                    break;
-                }
-                case "termux_vibrate": {
-                    int duration = args.optInt("duration_ms", 500);
-                    textOutput = doVibrate(duration);
-                    break;
-                }
-                case "open_url": {
-                    String url = args.optString("url", "");
-                    textOutput = openUrl(url);
-                    break;
-                }
-                case "download_file": {
-                    String url = args.optString("url", "");
-                    String dest = args.optString("dest_path", "");
-                    textOutput = downloadFile(url, dest);
-                    break;
-                }
-                default:
-                    isError = true;
-                    textOutput = "未知工具名称: " + toolName;
-                    break;
-            }
-        } catch (Exception e) {
-            isError = true;
-            textOutput = "执行异常: " + e.getMessage();
-        }
-
-        try {
-            JSONObject textObj = new JSONObject();
-            textObj.put("type", "text");
-            textObj.put("text", textOutput);
-            content.put(textObj);
-
-            result.put("content", content);
-            result.put("isError", isError);
-        } catch (Exception ignored) {}
-
-        return result;
-    }
-
-    private String getClipboardContent() {
-        try {
-            FutureTask<String> task = new FutureTask<>(() -> {
-                ClipboardManager cm = (ClipboardManager) mContext.getSystemService(Context.CLIPBOARD_SERVICE);
-                if (cm != null && cm.hasPrimaryClip()) {
-                    ClipData data = cm.getPrimaryClip();
-                    if (data != null && data.getItemCount() > 0) {
-                        CharSequence text = data.getItemAt(0).getText();
-                        return text != null ? text.toString() : "";
-                    }
-                }
-                return "";
-            });
-            new Handler(Looper.getMainLooper()).post(task);
-            String result = task.get(3, TimeUnit.SECONDS);
-            return (result == null || result.isEmpty()) ? "（手机剪贴板为空）" : result;
-        } catch (Exception e) {
-            return "读取剪贴板异常: " + e.getMessage();
-        }
-    }
-
-    private String setClipboardContent(String text) {
-        if (text == null) text = "";
-        final String copyText = text;
-        try {
-            new Handler(Looper.getMainLooper()).post(() -> {
-                ClipboardManager cm = (ClipboardManager) mContext.getSystemService(Context.CLIPBOARD_SERVICE);
-                if (cm != null) {
-                    ClipData clip = ClipData.newPlainText("Termux MCP", copyText);
-                    cm.setPrimaryClip(clip);
-                }
-            });
-            return "已成功将 " + text.length() + " 个字符写入手机系统剪贴板！";
-        } catch (Exception e) {
-            return "写入剪贴板异常: " + e.getMessage();
-        }
-    }
-
-    private String showToast(String message) {
-        if (message == null || message.trim().isEmpty()) {
-            return "提示内容不能为空";
-        }
-        try {
-            new Handler(Looper.getMainLooper()).post(() -> {
-                Toast.makeText(mContext.getApplicationContext(), message, Toast.LENGTH_SHORT).show();
-            });
-            return "屏幕气泡已弹出: " + message;
-        } catch (Exception e) {
-            return "弹出屏幕气泡失败: " + e.getMessage();
-        }
-    }
-
-    private String toggleTorch(boolean enable) {
-        try {
-            CameraManager cm = (CameraManager) mContext.getSystemService(Context.CAMERA_SERVICE);
-            if (cm == null) return "设备不支持相机管理服务";
-            String[] ids = cm.getCameraIdList();
-            if (ids == null || ids.length == 0) return "未检测到可用摄像头与闪光灯";
-            cm.setTorchMode(ids[0], enable);
-            return enable ? "手机手电筒已打开 🔦" : "手机手电筒已关闭";
-        } catch (Exception e) {
-            return "手电筒控制失败: " + e.getMessage();
-        }
-    }
-
-    private TextToSpeech mTextToSpeech;
-    private void initTtsIfNeeded() {
-        if (mTextToSpeech == null) {
-            new Handler(Looper.getMainLooper()).post(() -> {
-                mTextToSpeech = new TextToSpeech(mContext.getApplicationContext(), status -> {
-                    if (status == TextToSpeech.SUCCESS && mTextToSpeech != null) {
-                        mTextToSpeech.setLanguage(Locale.CHINESE);
-                    }
-                });
-            });
-        }
-    }
-
-    private String speakTts(String text) {
-        if (text == null || text.trim().isEmpty()) return "朗读内容不能为空";
-        try {
-            initTtsIfNeeded();
-            new Handler(Looper.getMainLooper()).post(() -> {
-                if (mTextToSpeech != null) {
-                    mTextToSpeech.speak(text, TextToSpeech.QUEUE_ADD, null, "TermuxMcpUtterance");
-                }
-            });
-            return "已通过扬声器开始朗读: " + text;
-        } catch (Exception e) {
-            return "语音朗读失败: " + e.getMessage();
-        }
-    }
-
-    private String openUrl(String url) {
-        if (url == null || url.trim().isEmpty()) return "URL 不能为空";
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            url = "https://" + url;
-        }
-        try {
-            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            mContext.startActivity(intent);
-            return "已在手机浏览器中打开网页: " + url;
-        } catch (Exception e) {
-            return "打开网页失败: " + e.getMessage();
-        }
-    }
-
-    private String downloadFile(String url, String destPath) {
-        if (url == null || url.trim().isEmpty()) return "下载链接不能为空";
-        if (destPath == null || destPath.trim().isEmpty()) {
-            String filename = "downloaded_file";
-            int slashIdx = url.lastIndexOf('/');
-            if (slashIdx != -1 && slashIdx < url.length() - 1) {
-                String potential = url.substring(slashIdx + 1);
-                if (potential.contains("?")) potential = potential.substring(0, potential.indexOf('?'));
-                if (!potential.isEmpty()) filename = potential;
-            }
-            destPath = "/sdcard/Download/" + filename;
-        }
-        String cmd = "curl -sSL -L -o " + escapeShellArg(destPath) + " " + escapeShellArg(url);
-        String output = runShellCommand(cmd, TermuxConstants.TERMUX_HOME_DIR_PATH, 120000);
-        File dest = new File(destPath);
-        if (dest.exists() && dest.length() > 0) {
-            return "下载成功！文件已保存至: " + destPath + " (大小: " + dest.length() + " 字节)";
-        } else {
-            return "下载完成（或未检测到目标文件），回显如下:\n" + output;
-        }
-    }
-
-    private String escapeShellArg(String arg) {
-        if (arg == null) return "''";
-        return "'" + arg.replace("'", "'\\''") + "'";
-    }
-
-    /**
-     * 在 Termux 完整环境中执行 Shell 命令
-     */
-    private String runShellCommand(String command, String cwdStr, int timeoutMs) {
-        if (command == null || command.trim().isEmpty()) {
-            return "错误：命令行不能为空";
-        }
-
-        File cwd = new File(cwdStr != null && !cwdStr.isEmpty() ? cwdStr : TermuxConstants.TERMUX_HOME_DIR_PATH);
-        if (!cwd.exists()) {
-            cwd = new File(TermuxConstants.TERMUX_HOME_DIR_PATH);
-        }
-
-        // 优先使用 Termux 自带的标准 bash，否则兜底 /bin/bash 或 sh
-        String shell = TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/bash";
-        if (!new File(shell).exists()) {
-            shell = "/bin/bash";
-            if (!new File(shell).exists()) {
-                shell = "sh";
-            }
-        }
-
-        ProcessBuilder pb = new ProcessBuilder(shell, "-c", command);
-        pb.directory(cwd);
-
-        // 注入完整的 Termux 运行时环境变量
-        Map<String, String> env = pb.environment();
-        env.put("PREFIX", TermuxConstants.TERMUX_PREFIX_DIR_PATH);
-        env.put("HOME", TermuxConstants.TERMUX_HOME_DIR_PATH);
-        env.put("PATH", TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":" +
-            TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/applets:" +
-            "/usr/local/bin:/usr/bin:/bin:" + System.getenv("PATH"));
-        env.put("LD_PRELOAD", TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/lib/libtermux-exec.so");
-        env.put("TMPDIR", TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH);
-        env.put("LANG", "en_US.UTF-8");
-        env.put("TERM", "xterm-256color");
-
-        try {
-            Process process = pb.start();
-
-            // 异步并发收集 stdout 和 stderr
-            ByteArrayOutputStream outStream = new ByteArrayOutputStream();
-            ByteArrayOutputStream errStream = new ByteArrayOutputStream();
-
-            Thread tOut = new Thread(() -> copyStream(process.getInputStream(), outStream));
-            Thread tErr = new Thread(() -> copyStream(process.getErrorStream(), errStream));
-            tOut.start();
-            tErr.start();
-
-            boolean finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                return "执行超时（限制: " + timeoutMs + "ms）";
-            }
-
-            tOut.join(1000);
-            tErr.join(1000);
-
-            int exitCode = process.exitValue();
-            String stdout = outStream.toString("UTF-8");
-            String stderr = errStream.toString("UTF-8");
-
-            StringBuilder sb = new StringBuilder();
-            if (!stdout.isEmpty()) {
-                sb.append(stdout);
-            }
-            if (!stderr.isEmpty()) {
-                if (sb.length() > 0 && !sb.toString().endsWith("\n")) sb.append("\n");
-                sb.append("[stderr]:\n").append(stderr);
-            }
-            if (exitCode != 0) {
-                sb.append("\n[进程退出码: ").append(exitCode).append("]");
-            }
-            return sb.toString();
-
-        } catch (Exception e) {
-            return "Shell 执行异常: " + e.getMessage();
-        }
-    }
-
-    private void copyStream(InputStream in, OutputStream out) {
-        try {
-            byte[] buf = new byte[4096];
-            int len;
-            while ((len = in.read(buf)) != -1) {
-                out.write(buf, 0, len);
-            }
-        } catch (Exception ignored) {}
-    }
-
-    private String readFileContent(String path) {
-        File file = new File(path);
-        if (!file.exists()) return "错误：文件不存在 (" + path + ")";
-        if (file.isDirectory()) return "错误：该路径为目录，不能直接按文件读取";
-        if (file.length() > 2 * 1024 * 1024) return "错误：文件超过 2MB，请使用命令分片查看";
-
-        try (FileInputStream fis = new FileInputStream(file)) {
-            byte[] data = new byte[(int) file.length()];
-            int read = fis.read(data);
-            return new String(data, 0, read, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            return "读取失败: " + e.getMessage();
-        }
-    }
-
-    private String writeFileContent(String path, String content, boolean append) {
-        File file = new File(path);
-        File parent = file.getParentFile();
-        if (parent != null && !parent.exists()) {
-            parent.mkdirs();
-        }
-        try (FileOutputStream fos = new FileOutputStream(file, append)) {
-            fos.write(content.getBytes(StandardCharsets.UTF_8));
-            return "成功写入 " + content.getBytes(StandardCharsets.UTF_8).length + " 字节至 " + path;
-        } catch (Exception e) {
-            return "写入失败: " + e.getMessage();
-        }
-    }
-
-    private String listDirectory(String path) {
-        File dir = new File(path != null && !path.isEmpty() ? path : TermuxConstants.TERMUX_HOME_DIR_PATH);
-        if (!dir.exists()) return "错误：路径不存在 (" + path + ")";
-        if (!dir.isDirectory()) return "错误：指定路径不是文件夹";
-
-        File[] files = dir.listFiles();
-        if (files == null) return "无法访问或空目录";
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("目录: ").append(dir.getAbsolutePath()).append(" (共 ").append(files.length).append(" 项)\n");
-        for (File f : files) {
-            if (f.isDirectory()) {
-                sb.append("📁 [DIR]  ").append(f.getName()).append("/\n");
-            } else {
-                sb.append("📄 [FILE] ").append(f.getName()).append(" (").append(f.length()).append(" 字节)\n");
-            }
-        }
-        return sb.toString();
-    }
-
-    private String getSystemStatusJson() {
-        try {
-            JSONObject obj = new JSONObject();
-            obj.put("device", Build.MANUFACTURER + " " + Build.MODEL);
-            obj.put("androidVersion", Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")");
-            obj.put("architecture", Build.SUPPORTED_ABIS != null && Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "unknown");
-
-            // 运存信息
-            ActivityManager am = (ActivityManager) mContext.getSystemService(Context.ACTIVITY_SERVICE);
-            if (am != null) {
-                ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
-                am.getMemoryInfo(mi);
-                long availMb = mi.availMem / (1024 * 1024);
-                long totalMb = mi.totalMem / (1024 * 1024);
-                obj.put("ram", availMb + "MB 可用 / " + totalMb + "MB 总量");
-            }
-
-            // 存储空间
-            StatFs stat = new StatFs(Environment.getDataDirectory().getPath());
-            long availStorageMb = (stat.getAvailableBlocksLong() * stat.getBlockSizeLong()) / (1024 * 1024);
-            long totalStorageMb = (stat.getBlockCountLong() * stat.getBlockSizeLong()) / (1024 * 1024);
-            obj.put("storage", availStorageMb + "MB 剩余 / " + totalStorageMb + "MB 总量");
-
-            // 电池状态
-            Intent batteryIntent = mContext.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-            if (batteryIntent != null) {
-                int level = batteryIntent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
-                int scale = batteryIntent.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
-                int status = batteryIntent.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
-                boolean charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL;
-                float pct = (level * 100f) / scale;
-                obj.put("battery", (int) pct + "%" + (charging ? " (⚡ 充电中)" : " (放电中)"));
-            }
-
-            obj.put("localIp", TermuxMcpManager.getLocalIpAddress());
-            obj.put("mcpPort", mPort);
-            return obj.toString(2);
-        } catch (Exception e) {
-            return "{\"error\": \"" + e.getMessage() + "\"}";
-        }
-    }
-
-    private String postNotification(String title, String content) {
-        try {
-            NotificationManager nm = (NotificationManager) mContext.getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm != null) {
-                NotificationUtils.setupNotificationChannel(mContext, TermuxConstants.TERMUX_APP_NOTIFICATION_CHANNEL_ID, "Termux+ Notifications", NotificationManager.IMPORTANCE_HIGH);
-                Notification.Builder builder = NotificationUtils.geNotificationBuilder(mContext, TermuxConstants.TERMUX_APP_NOTIFICATION_CHANNEL_ID, Notification.PRIORITY_HIGH, title, content, content, null, null, NotificationUtils.NOTIFICATION_MODE_ALL);
-                if (builder != null) {
-                    builder.setSmallIcon(R.drawable.ic_terminal);
-                    nm.notify((int) System.currentTimeMillis(), builder.build());
-                    return "成功在手机状态栏弹出系统通知: " + title;
-                }
-            }
-            return "通知发送失败：无法初始化通知构建器";
-        } catch (Exception e) {
-            return "发送通知异常: " + e.getMessage();
-        }
-    }
-
-    private String doVibrate(int durationMs) {
-        try {
-            Vibrator v = (Vibrator) mContext.getSystemService(Context.VIBRATOR_SERVICE);
-            if (v != null) {
-                v.vibrate(Math.min(durationMs, 5000));
-                return "手机成功震动 " + durationMs + " 毫秒";
-            }
-            return "未找到震动马达硬件";
-        } catch (Exception e) {
-            return "震动调用失败: " + e.getMessage();
-        }
-    }
-
     private void handleOpenApiSpec(Map<String, String> headers, OutputStream out) throws IOException {
         String host = headers.get("host");
         String publicHost = (host != null) ? "https://" + host : null;
@@ -1825,17 +1110,14 @@ public class TermuxMcpServer {
     }
 
     private void handleRestExecute(String body, OutputStream out) throws IOException {
-        if (!isToolAllowed("execute_command")) {
+        if (!ToolRegistry.getInstance().isToolAllowed("execute_command", mContext)) {
             sendJsonResponse(out, 403, "{\"success\": false, \"error\": \"权限拒绝：终端执行命令工具已被用户在手机端关闭！\"}");
             return;
         }
         try {
-            JSONObject req = new JSONObject(body);
-            String command = req.optString("command", "");
-            String cwd = req.optString("cwd", TermuxConstants.TERMUX_HOME_DIR_PATH);
-            int defaultTimeoutMs = TermuxMcpManager.getInstance().getExecTimeoutSec(mContext) * 1000;
-            int timeout = req.optInt("timeout_ms", defaultTimeoutMs);
-            String output = runShellCommand(command, cwd, timeout);
+            JSONObject req = new JSONObject(body != null && !body.isEmpty() ? body : "{}");
+            McpTool tool = ToolRegistry.getInstance().getTool("execute_command");
+            String output = (tool != null) ? tool.execute(req, mContext) : "错误：未找到 execute_command 工具";
 
             JSONObject resp = new JSONObject();
             resp.put("success", true);
@@ -1847,20 +1129,20 @@ public class TermuxMcpServer {
     }
 
     private void handleRestSystem(OutputStream out) throws IOException {
-        if (!isToolAllowed("get_system_info")) {
+        if (!ToolRegistry.getInstance().isToolAllowed("get_system_info", mContext)) {
             sendJsonResponse(out, 403, "{\"success\": false, \"error\": \"权限拒绝：系统状态信息工具已被用户在手机端关闭！\"}");
             return;
         }
-        sendJsonResponse(out, 200, getSystemStatusJson());
+        sendJsonResponse(out, 200, SystemInfoTool.getSystemStatusJson(mContext));
     }
 
     private void handleRestClipboard(String method, String body, OutputStream out) throws IOException {
-        if (!isToolAllowed("get_clipboard")) {
+        if (!ToolRegistry.getInstance().isToolAllowed("get_clipboard", mContext)) {
             sendJsonResponse(out, 403, "{\"success\": false, \"error\": \"权限拒绝：剪贴板工具已被用户在手机端关闭！\"}");
             return;
         }
         if ("GET".equalsIgnoreCase(method)) {
-            String text = getClipboardContent();
+            String text = ClipboardTools.getClipboardContent(mContext);
             try {
                 JSONObject resp = new JSONObject();
                 resp.put("success", true);
@@ -1873,7 +1155,7 @@ public class TermuxMcpServer {
             try {
                 JSONObject req = new JSONObject(body != null && !body.isEmpty() ? body : "{}");
                 String text = req.optString("text", "");
-                String res = setClipboardContent(text);
+                String res = ClipboardTools.setClipboardContent(text, mContext);
                 JSONObject resp = new JSONObject();
                 resp.put("success", true);
                 resp.put("message", res);
@@ -1885,14 +1167,14 @@ public class TermuxMcpServer {
     }
 
     private void handleRestTorch(String body, OutputStream out) throws IOException {
-        if (!isToolAllowed("termux_torch")) {
+        if (!ToolRegistry.getInstance().isToolAllowed("termux_torch", mContext)) {
             sendJsonResponse(out, 403, "{\"success\": false, \"error\": \"权限拒绝：手电筒工具已被用户在手机端关闭！\"}");
             return;
         }
         try {
             JSONObject req = new JSONObject(body != null && !body.isEmpty() ? body : "{}");
             boolean enabled = req.optBoolean("enabled", true);
-            String res = toggleTorch(enabled);
+            String res = DeviceHardwareTools.toggleTorch(enabled, mContext);
             JSONObject resp = new JSONObject();
             resp.put("success", true);
             resp.put("message", res);
@@ -1903,14 +1185,14 @@ public class TermuxMcpServer {
     }
 
     private void handleRestTts(String body, OutputStream out) throws IOException {
-        if (!isToolAllowed("termux_tts_speak")) {
+        if (!ToolRegistry.getInstance().isToolAllowed("termux_tts_speak", mContext)) {
             sendJsonResponse(out, 403, "{\"success\": false, \"error\": \"权限拒绝：TTS语音朗读工具已被用户在手机端关闭！\"}");
             return;
         }
         try {
             JSONObject req = new JSONObject(body != null && !body.isEmpty() ? body : "{}");
             String text = req.optString("text", "");
-            String res = speakTts(text);
+            String res = DeviceHardwareTools.speakTts(text, mContext);
             JSONObject resp = new JSONObject();
             resp.put("success", true);
             resp.put("message", res);
@@ -1921,14 +1203,14 @@ public class TermuxMcpServer {
     }
 
     private void handleRestToast(String body, OutputStream out) throws IOException {
-        if (!isToolAllowed("termux_toast")) {
+        if (!ToolRegistry.getInstance().isToolAllowed("termux_toast", mContext)) {
             sendJsonResponse(out, 403, "{\"success\": false, \"error\": \"权限拒绝：屏幕气泡工具已被用户在手机端关闭！\"}");
             return;
         }
         try {
             JSONObject req = new JSONObject(body != null && !body.isEmpty() ? body : "{}");
             String msg = req.optString("message", "");
-            String res = showToast(msg);
+            String res = DeviceHardwareTools.showToast(msg, mContext);
             JSONObject resp = new JSONObject();
             resp.put("success", true);
             resp.put("message", res);
@@ -1939,14 +1221,14 @@ public class TermuxMcpServer {
     }
 
     private void handleRestOpenUrl(String body, OutputStream out) throws IOException {
-        if (!isToolAllowed("open_url")) {
+        if (!ToolRegistry.getInstance().isToolAllowed("open_url", mContext)) {
             sendJsonResponse(out, 403, "{\"success\": false, \"error\": \"权限拒绝：打开网页工具已被用户在手机端关闭！\"}");
             return;
         }
         try {
             JSONObject req = new JSONObject(body != null && !body.isEmpty() ? body : "{}");
             String url = req.optString("url", "");
-            String res = openUrl(url);
+            String res = NetworkTools.openUrl(url, mContext);
             JSONObject resp = new JSONObject();
             resp.put("success", true);
             resp.put("message", res);
@@ -1957,7 +1239,7 @@ public class TermuxMcpServer {
     }
 
     private void handleRestDownload(String body, OutputStream out) throws IOException {
-        if (!isToolAllowed("download_file")) {
+        if (!ToolRegistry.getInstance().isToolAllowed("download_file", mContext)) {
             sendJsonResponse(out, 403, "{\"success\": false, \"error\": \"权限拒绝：高速下载工具已被用户在手机端关闭！\"}");
             return;
         }
@@ -1965,7 +1247,7 @@ public class TermuxMcpServer {
             JSONObject req = new JSONObject(body != null && !body.isEmpty() ? body : "{}");
             String url = req.optString("url", "");
             String dest = req.optString("dest_path", "");
-            String res = downloadFile(url, dest);
+            String res = NetworkTools.downloadFile(url, dest, mContext);
             JSONObject resp = new JSONObject();
             resp.put("success", true);
             resp.put("message", res);
@@ -1991,9 +1273,11 @@ public class TermuxMcpServer {
             status.put("port", mPort);
             status.put("timeout_sec", TermuxMcpManager.getInstance().getExecTimeoutSec(mContext));
             status.put("token_required", mToken != null && !mToken.isEmpty());
+            status.put("tools_count", ToolRegistry.getInstance().getMcpToolsDefinition(mContext).length());
             sendJsonResponse(out, 200, status.toString(2));
         } catch (Exception e) {
             sendJsonResponse(out, 200, "{\"status\": \"running\"}");
         }
     }
+}
 }
