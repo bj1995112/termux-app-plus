@@ -673,29 +673,29 @@ public class TermuxMcpActivity extends AppCompatActivity {
         addDivider(openAiLayout, density);
 
         // 转发目标端口行 (选填 · 默认 28488)
-        LinearLayout portHeaderRow = new LinearLayout(this);
-        portHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
-        portHeaderRow.setGravity(Gravity.CENTER_VERTICAL);
-        portHeaderRow.setPadding(0, (int) (4 * density), 0, 0);
+        LinearLayout targetPortHeaderRow = new LinearLayout(this);
+        targetPortHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
+        targetPortHeaderRow.setGravity(Gravity.CENTER_VERTICAL);
+        targetPortHeaderRow.setPadding(0, (int) (4 * density), 0, 0);
 
-        LinearLayout portTextCol = new LinearLayout(this);
-        portTextCol.setOrientation(LinearLayout.VERTICAL);
-        portTextCol.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
+        LinearLayout targetPortTextCol = new LinearLayout(this);
+        targetPortTextCol.setOrientation(LinearLayout.VERTICAL);
+        targetPortTextCol.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
 
         TextView tvTargetPortLabel = new TextView(this);
         tvTargetPortLabel.setText("转发目标 MCP 端口 (默认 28488)");
         tvTargetPortLabel.setTextSize(14);
         tvTargetPortLabel.setTypeface(null, Typeface.BOLD);
         tvTargetPortLabel.setTextColor(mTextColorPrimary);
-        portTextCol.addView(tvTargetPortLabel);
+        targetPortTextCol.addView(tvTargetPortLabel);
 
         TextView tvTargetPortHint = new TextView(this);
         tvTargetPortHint.setText("默认转发给 Termux+ 内置服务 (28488)，亦可切换为本地其他服务 (如 3100)");
         tvTargetPortHint.setTextSize(12);
         tvTargetPortHint.setTextColor(mTextColorSecondary);
-        portTextCol.addView(tvTargetPortHint);
-        portHeaderRow.addView(portTextCol);
-        openAiLayout.addView(portHeaderRow);
+        targetPortTextCol.addView(tvTargetPortHint);
+        targetPortHeaderRow.addView(targetPortTextCol);
+        openAiLayout.addView(targetPortHeaderRow);
 
         mTvOpenAiTargetPort = new TextView(this);
         mTvOpenAiTargetPort.setTextSize(13);
