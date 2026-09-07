@@ -1055,7 +1055,7 @@ public class TermuxMcpActivity extends AppCompatActivity {
                         Toast.makeText(this, "已启动 OpenAI 官方隧道，正在建立出站长连接...", Toast.LENGTH_SHORT).show();
                     }
                 } else {
-                    manager.stopTunnel();
+                    manager.stopTunnel(this);
                     Toast.makeText(this, "OpenAI 官方隧道已停止", Toast.LENGTH_SHORT).show();
                 }
                 refreshUI();
@@ -1226,7 +1226,7 @@ public class TermuxMcpActivity extends AppCompatActivity {
                 manager.setTunnelId(this, val);
                 refreshUI();
                 if (manager.isRunning()) {
-                    manager.stopTunnel();
+                    manager.stopTunnel(this);
                     manager.startTunnel(this);
                     Toast.makeText(this, "Tunnel ID 已保存，隧道已自动重启生效", Toast.LENGTH_SHORT).show();
                 } else {
@@ -1254,7 +1254,7 @@ public class TermuxMcpActivity extends AppCompatActivity {
                 manager.setApiKey(this, val);
                 refreshUI();
                 if (manager.isRunning()) {
-                    manager.stopTunnel();
+                    manager.stopTunnel(this);
                     manager.startTunnel(this);
                     Toast.makeText(this, "API Key 已保存，隧道已自动重启生效", Toast.LENGTH_SHORT).show();
                 } else {
@@ -1271,32 +1271,39 @@ public class TermuxMcpActivity extends AppCompatActivity {
         input.setInputType(InputType.TYPE_CLASS_NUMBER);
         int curr = manager.getTargetPort(this);
         input.setText(curr > 0 ? String.valueOf(curr) : "");
-        input.setHint("默认 28488（或填入 3100 等）");
+        input.setHint("留空默认 28488（或填 3100 等）");
         input.setSelectAllOnFocus(true);
 
         new AlertDialog.Builder(this)
             .setTitle("配置隧道转发目标端口")
-            .setMessage("OpenAI 隧道默认将请求转发给手机内置原生 MCP 服务（28488 端口）。\n\n若您在手机后台运行了其他 MCP 脚本（例如 3100 端口的 Node.js/Python 服务），可在此指定目标端口。留空或填 0 恢复默认：")
+            .setMessage("OpenAI 隧道默认将请求直接转发给 Termux+ 原生内置服务（28488 端口）。\n\n如果需要临时转发给外部脚本（如容器内 3100 端口），请填入对应端口；如需使用内置服务，请清空或直接点击【恢复默认 (28488)】：")
             .setView(input)
-            .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+            .setPositiveButton("保存并生效", (dialog, which) -> {
                 String val = input.getText().toString().trim();
                 int port = 0;
                 try {
                     if (!val.isEmpty()) port = Integer.parseInt(val);
                 } catch (Exception ignored) {}
-                manager.setTargetPort(this, port);
-                refreshUI();
-                String portDesc = port > 0 ? ("已将转发目标端口设置为: " + port) : "已恢复默认端口 (28488)";
-                if (manager.isRunning()) {
-                    manager.stopTunnel();
-                    manager.startTunnel(this);
-                    Toast.makeText(this, portDesc + "，隧道已自动重启生效", Toast.LENGTH_SHORT).show();
-                } else {
-                    Toast.makeText(this, portDesc, Toast.LENGTH_SHORT).show();
-                }
+                applyTargetPortChange(manager, port);
+            })
+            .setNeutralButton("恢复默认 (28488)", (dialog, which) -> {
+                applyTargetPortChange(manager, 0);
             })
             .setNegativeButton(android.R.string.cancel, null)
             .show();
+    }
+
+    private void applyTargetPortChange(OpenAiTunnelManager manager, int port) {
+        manager.setTargetPort(this, port);
+        refreshUI();
+        String portDesc = (port > 0 && port != 28488) ? ("已将转发目标端口设置为: " + port + " (外部服务)") : "已恢复默认内置原生服务 (28488)";
+        if (manager.isRunning()) {
+            manager.stopTunnel(this);
+            manager.startTunnel(this);
+            Toast.makeText(this, portDesc + "，隧道已强力重启生效", Toast.LENGTH_SHORT).show();
+        } else {
+            Toast.makeText(this, portDesc, Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void showEditOpenAiProxyDialog() {
@@ -1318,7 +1325,7 @@ public class TermuxMcpActivity extends AppCompatActivity {
                 refreshUI();
                 String modeDesc = val.isEmpty() ? "已切换为【全自动智能代理模式】" : "已保存指定前置代理";
                 if (manager.isRunning()) {
-                    manager.stopTunnel();
+                    manager.stopTunnel(this);
                     manager.startTunnel(this);
                     Toast.makeText(this, modeDesc + "，隧道已自动重启生效", Toast.LENGTH_SHORT).show();
                 } else {

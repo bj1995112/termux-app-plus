@@ -286,8 +286,17 @@ public class TermuxMcpServer {
 
                 // 6. 路由分发
                 if (path.equals("/mcp")) {
-                    // 最新标准 Streamable HTTP 单端点 (2026 MCP 规范)
-                    handleMcpPost(body, out, headers, queryParams, path);
+                    // 最新标准 Streamable HTTP 单端点 (2026 MCP 规范：支持 POST 消息、GET 事件流、DELETE 会话清理)
+                    if ("GET".equalsIgnoreCase(method)) {
+                        handleMcpGet(out, socket, headers, queryParams);
+                        break;
+                    } else if ("DELETE".equalsIgnoreCase(method)) {
+                        handleMcpDelete(out, headers, queryParams);
+                    } else if ("POST".equalsIgnoreCase(method)) {
+                        handleMcpPost(body, out, headers, queryParams, path);
+                    } else {
+                        sendJsonResponse(out, 405, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Method not allowed\"}}");
+                    }
                 } else if (path.equals("/sse") && "GET".equals(method)) {
                     // 经典 SSE 订阅端点（接管长连接直到客户端断开）
                     handleSseGet(out, socket);
@@ -917,20 +926,12 @@ public class TermuxMcpServer {
                     break;
             }
 
-            // 2. 如果有活跃的传统 SSE 会话（比如客户端正在长连接监听 /sse）：
+            // 2. 如果有活跃的 SSE 会话（比如客户端正在长连接监听 GET /mcp 或 GET /sse）：
             //    同时通过 SSE 事件通道广播 JSON-RPC 响应
             if (sessionId != null && mSseSessions.containsKey(sessionId)) {
                 OutputStream sseOut = mSseSessions.get(sessionId);
                 if (sseOut != null) {
-                    try {
-                        synchronized (sseOut) {
-                            String sseMsg = "event: message\r\ndata: " + resp.toString() + "\r\n\r\n";
-                            sseOut.write(sseMsg.getBytes(StandardCharsets.UTF_8));
-                            sseOut.flush();
-                        }
-                    } catch (Exception e) {
-                        mSseSessions.remove(sessionId);
-                    }
+                    sendSseNotification(sseOut, "event: message\r\ndata: " + resp.toString() + "\r\n\r\n");
                 }
             }
 
@@ -957,6 +958,85 @@ public class TermuxMcpServer {
             Logger.logStackTraceWithMessage(LOG_TAG, "Error processing MCP request", e);
             sendJsonResponse(out, 500, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32603,\"message\":\"Internal error: " + e.getMessage() + "\"}}");
         }
+    }
+
+    /**
+     * 处理 MCP Streamable HTTP GET 请求（建立持久 SSE 事件流通道）
+     */
+    private void handleMcpGet(OutputStream out, Socket socket, Map<String, String> headers, Map<String, String> queryParams) throws IOException {
+        String sessionId = headers != null ? headers.get("mcp-session-id") : null;
+        if ((sessionId == null || sessionId.isEmpty()) && queryParams != null) {
+            sessionId = queryParams.get("sessionId");
+        }
+        if (sessionId == null || sessionId.isEmpty()) {
+            sessionId = UUID.randomUUID().toString();
+        }
+
+        mSessions.put(sessionId, new McpSession(sessionId));
+        mSseSessions.put(sessionId, out);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("HTTP/1.1 200 OK\r\n");
+        sb.append("Content-Type: text/event-stream\r\n");
+        sb.append("Cache-Control: no-cache, no-transform\r\n");
+        sb.append("Connection: keep-alive\r\n");
+        sb.append("x-accel-buffering: no\r\n");
+        sb.append("mcp-session-id: ").append(sessionId).append("\r\n");
+        sb.append("Transfer-Encoding: chunked\r\n");
+        sb.append("Access-Control-Allow-Origin: *\r\n\r\n");
+        out.write(sb.toString().getBytes(StandardCharsets.UTF_8));
+        out.flush();
+
+        // 持续保持 SSE 长连接与 keep-alive 心跳
+        byte[] keepAliveBytes = ": keepalive\n\n".getBytes(StandardCharsets.UTF_8);
+        String chunkHeader = Integer.toHexString(keepAliveBytes.length) + "\r\n";
+
+        try {
+            while (mRunning && !socket.isClosed()) {
+                Thread.sleep(15000);
+                synchronized (out) {
+                    out.write(chunkHeader.getBytes(StandardCharsets.UTF_8));
+                    out.write(keepAliveBytes);
+                    out.write("\r\n".getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                }
+            }
+        } catch (Exception ignored) {
+        } finally {
+            mSseSessions.remove(sessionId);
+        }
+    }
+
+    /**
+     * 处理 MCP Streamable HTTP DELETE 请求（客户端主动清理关闭会话）
+     */
+    private void handleMcpDelete(OutputStream out, Map<String, String> headers, Map<String, String> queryParams) throws IOException {
+        String sessionId = headers != null ? headers.get("mcp-session-id") : null;
+        if ((sessionId == null || sessionId.isEmpty()) && queryParams != null) {
+            sessionId = queryParams.get("sessionId");
+        }
+        if (sessionId != null && !sessionId.isEmpty()) {
+            mSessions.remove(sessionId);
+            mSseSessions.remove(sessionId);
+        }
+        sendEmptyResponse(out, 200);
+    }
+
+    /**
+     * 向活跃的 SSE 流推送 chunked 消息
+     */
+    private void sendSseNotification(OutputStream sseOut, String sseMsg) {
+        if (sseOut == null) return;
+        try {
+            byte[] payload = sseMsg.getBytes(StandardCharsets.UTF_8);
+            String chunkHeader = Integer.toHexString(payload.length) + "\r\n";
+            synchronized (sseOut) {
+                sseOut.write(chunkHeader.getBytes(StandardCharsets.UTF_8));
+                sseOut.write(payload);
+                sseOut.write("\r\n".getBytes(StandardCharsets.UTF_8));
+                sseOut.flush();
+            }
+        } catch (Exception ignored) {}
     }
 
     /**

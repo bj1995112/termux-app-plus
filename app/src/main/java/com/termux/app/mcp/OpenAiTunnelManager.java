@@ -10,7 +10,9 @@ import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.TermuxConstants;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -88,6 +90,7 @@ public class OpenAiTunnelManager {
     private static volatile OpenAiTunnelManager sInstance;
 
     private Process mProcess;
+    private Context mAppContext;
     private volatile TunnelState mState = TunnelState.STOPPED;
     private volatile String mLastError = "";
     private final Deque<String> mLogBuffer = new ArrayDeque<>(150);
@@ -338,6 +341,10 @@ public class OpenAiTunnelManager {
             stopTunnel();
         }
 
+        mAppContext = context.getApplicationContext();
+        // 启动前强力清理所有残留的孤儿 tunnel-client 进程，杜绝 tunnel-id 冲突
+        killStaleTunnelProcesses(context);
+
         String tunnelId = getTunnelId(context);
         String apiKey = getApiKey(context);
         String proxy = getProxy(context);
@@ -374,6 +381,10 @@ public class OpenAiTunnelManager {
         cmd.add("http://127.0.0.1:" + targetPort + "/mcp");
         cmd.add("--health.listen-addr");
         cmd.add("127.0.0.1:0"); // 自动分配随机空闲健康端口
+
+        File pidFile = new File(context.getFilesDir(), "tunnel-client.pid");
+        cmd.add("--pid.file");
+        cmd.add(pidFile.getAbsolutePath());
 
         // 自动带上对应的 Bearer 认证 Token (同时为常规请求与 discovery 探测注入)
         String authToken = (targetPort == 3100) ? "bj1995112@." : TermuxMcpManager.getInstance().getToken(context);
@@ -531,6 +542,13 @@ public class OpenAiTunnelManager {
      * 停止 OpenAI 官方 Secure Tunnel 进程
      */
     public synchronized void stopTunnel() {
+        stopTunnel(mAppContext);
+    }
+
+    public synchronized void stopTunnel(Context context) {
+        if (context != null) {
+            mAppContext = context.getApplicationContext();
+        }
         if (mProcess != null) {
             try {
                 mProcess.destroy();
@@ -540,13 +558,81 @@ public class OpenAiTunnelManager {
             } catch (Exception ignored) {}
             mProcess = null;
         }
-        killStaleTunnelProcesses();
+        killStaleTunnelProcesses(context != null ? context : mAppContext);
         updateState(TunnelState.STOPPED, null);
     }
 
-    private void killStaleTunnelProcesses() {
+    private void killStaleTunnelProcesses(Context context) {
+        // 1. 根据 PID 文件精准击杀
+        if (context != null) {
+            try {
+                File pidFile = new File(context.getFilesDir(), "tunnel-client.pid");
+                if (pidFile.exists()) {
+                    String pidStr = readFileToString(pidFile);
+                    if (pidStr != null && !pidStr.trim().isEmpty()) {
+                        int pid = Integer.parseInt(pidStr.trim());
+                        android.os.Process.killProcess(pid);
+                        try {
+                            Runtime.getRuntime().exec(new String[]{"kill", "-9", String.valueOf(pid)});
+                        } catch (Exception ignored) {}
+                    }
+                    pidFile.delete();
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // 2. 遍历 /proc 查找自身 UID 下残留的所有 tunnel-client 进程并彻底击杀
         try {
-            Runtime.getRuntime().exec(new String[]{"sh", "-c", "pkill -f tunnel-client 2>/dev/null || killall tunnel-client 2>/dev/null || true"});
+            File procDir = new File("/proc");
+            File[] files = procDir.listFiles();
+            if (files != null) {
+                int myPid = android.os.Process.myPid();
+                for (File f : files) {
+                    if (f.isDirectory()) {
+                        String name = f.getName();
+                        if (name.matches("\\d+")) {
+                            try {
+                                int pid = Integer.parseInt(name);
+                                if (pid == myPid) continue;
+                                File cmdlineFile = new File(f, "cmdline");
+                                if (cmdlineFile.exists() && cmdlineFile.canRead()) {
+                                    String cmdline = readFileToString(cmdlineFile);
+                                    if (cmdline != null && cmdline.contains("tunnel-client")) {
+                                        android.os.Process.killProcess(pid);
+                                        try {
+                                            Runtime.getRuntime().exec(new String[]{"kill", "-9", String.valueOf(pid)});
+                                        } catch (Exception ignored) {}
+                                    }
+                                }
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                }
+            }
         } catch (Exception ignored) {}
+
+        // 3. 补充执行 Termux pkill 与 shell killall
+        try {
+            String pkillPath = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH, "pkill").getAbsolutePath();
+            if (new File(pkillPath).exists()) {
+                Runtime.getRuntime().exec(new String[]{pkillPath, "-9", "-f", "tunnel-client"});
+            }
+            Runtime.getRuntime().exec(new String[]{"sh", "-c", "pkill -9 -f tunnel-client 2>/dev/null || killall -9 tunnel-client 2>/dev/null || true"});
+        } catch (Exception ignored) {}
+    }
+
+    private String readFileToString(File file) {
+        if (!file.exists() || !file.canRead()) return null;
+        try (FileInputStream fis = new FileInputStream(file);
+             ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+            byte[] buf = new byte[1024];
+            int n;
+            while ((n = fis.read(buf)) != -1) {
+                bos.write(buf, 0, n);
+            }
+            return bos.toString("UTF-8");
+        } catch (Exception e) {
+            return null;
+        }
     }
 }
