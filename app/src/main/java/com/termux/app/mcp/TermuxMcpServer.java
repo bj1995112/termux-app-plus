@@ -384,10 +384,32 @@ public class TermuxMcpServer {
         out.flush();
     }
 
+    private String getStatusText(int statusCode) {
+        switch (statusCode) {
+            case 200: return "OK";
+            case 202: return "Accepted";
+            case 204: return "No Content";
+            case 302: return "Found";
+            case 400: return "Bad Request";
+            case 401: return "Unauthorized";
+            case 403: return "Forbidden";
+            case 404: return "Not Found";
+            case 500: return "Internal Server Error";
+            default: return "OK";
+        }
+    }
+
+    private void sendEmptyResponse(OutputStream out, int statusCode) throws IOException {
+        String resp = "HTTP/1.1 " + statusCode + " " + getStatusText(statusCode) + "\r\n" +
+            "Access-Control-Allow-Origin: *\r\n" +
+            "Content-Length: 0\r\n\r\n";
+        out.write(resp.getBytes(StandardCharsets.UTF_8));
+        out.flush();
+    }
+
     private void sendJsonResponse(OutputStream out, int statusCode, String json) throws IOException {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-        String statusText = (statusCode == 200) ? "OK" : (statusCode == 401 ? "Unauthorized" : (statusCode == 400 ? "Bad Request" : "Not Found"));
-        String resp = "HTTP/1.1 " + statusCode + " " + statusText + "\r\n" +
+        String resp = "HTTP/1.1 " + statusCode + " " + getStatusText(statusCode) + "\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "Access-Control-Allow-Origin: *\r\n" +
             "Content-Length: " + bytes.length + "\r\n\r\n";
@@ -407,8 +429,7 @@ public class TermuxMcpServer {
 
     private void sendHtmlResponse(OutputStream out, int statusCode, String html) throws IOException {
         byte[] bytes = html.getBytes(StandardCharsets.UTF_8);
-        String statusText = (statusCode == 200) ? "OK" : (statusCode == 403 ? "Forbidden" : "Bad Request");
-        String resp = "HTTP/1.1 " + statusCode + " " + statusText + "\r\n" +
+        String resp = "HTTP/1.1 " + statusCode + " " + getStatusText(statusCode) + "\r\n" +
             "Content-Type: text/html; charset=utf-8\r\n" +
             "Access-Control-Allow-Origin: *\r\n" +
             "Content-Length: " + bytes.length + "\r\n\r\n";
@@ -753,9 +774,9 @@ public class TermuxMcpServer {
             String method = req.optString("method", "");
             Object id = req.opt("id");
 
-            // 1. JSON-RPC 2.0 规范：若请求为 Notification（无 id 或以 notifications/ 开头），无需返回 RPC 响应
+            // 1. JSON-RPC 2.0 规范：若请求为 Notification（无 id 或以 notifications/ 开头），绝不可返回带有 body 的 JSON 响应，直接返回标准的 HTTP 202 Accepted 且 Content-Length: 0
             if (id == null || method.startsWith("notifications/")) {
-                sendJsonResponse(out, 202, "{\"status\":\"accepted\"}");
+                sendEmptyResponse(out, 202);
                 return;
             }
 
@@ -781,13 +802,11 @@ public class TermuxMcpServer {
                     }
                     initResult.put("protocolVersion", clientVersion);
 
+                    // 与官方 Node SDK 严格对齐：仅声明 tools 能力，避免声明未实际提供的空 resources/prompts 导致客户端校验失败
                     JSONObject capabilities = new JSONObject();
                     JSONObject toolsCap = new JSONObject();
                     toolsCap.put("listChanged", true);
                     capabilities.put("tools", toolsCap);
-                    capabilities.put("resources", new JSONObject());
-                    capabilities.put("prompts", new JSONObject());
-                    capabilities.put("logging", new JSONObject());
                     initResult.put("capabilities", capabilities);
 
                     JSONObject serverInfo = new JSONObject();
@@ -952,6 +971,24 @@ public class TermuxMcpServer {
     }
 
     /**
+     * 构建符合 JSON Schema draft-07 规范的 inputSchema
+     */
+    private JSONObject createToolSchema(JSONObject properties, String[] requiredFields) throws Exception {
+        JSONObject schema = new JSONObject();
+        schema.put("$schema", "http://json-schema.org/draft-07/schema#");
+        schema.put("type", "object");
+        schema.put("properties", properties != null ? properties : new JSONObject());
+        if (requiredFields != null && requiredFields.length > 0) {
+            JSONArray req = new JSONArray();
+            for (String field : requiredFields) {
+                req.put(field);
+            }
+            schema.put("required", req);
+        }
+        return schema;
+    }
+
+    /**
      * 获取对外暴露的 MCP 标准工具定义（受手机端独立开关动态控制）
      */
     private JSONArray getMcpToolsDefinition() throws Exception {
@@ -963,8 +1000,6 @@ public class TermuxMcpServer {
             JSONObject tExec = new JSONObject();
             tExec.put("name", "execute_command");
             tExec.put("description", "在手机 Termux+ 终端环境中执行 Shell 命令，返回回显与退出码。");
-            JSONObject sExec = new JSONObject();
-            sExec.put("type", "object");
             JSONObject pExec = new JSONObject();
             JSONObject pc = new JSONObject();
             pc.put("type", "string");
@@ -978,11 +1013,7 @@ public class TermuxMcpServer {
             pto.put("type", "integer");
             pto.put("description", "超时毫秒数（可选，默认 30000 毫秒）");
             pExec.put("timeout_ms", pto);
-            sExec.put("properties", pExec);
-            JSONArray rExec = new JSONArray();
-            rExec.put("command");
-            sExec.put("required", rExec);
-            tExec.put("inputSchema", sExec);
+            tExec.put("inputSchema", createToolSchema(pExec, new String[]{"command"}));
             tools.put(tExec);
         }
 
@@ -991,25 +1022,17 @@ public class TermuxMcpServer {
             JSONObject tRead = new JSONObject();
             tRead.put("name", "read_file");
             tRead.put("description", "读取手机中的指定文本文件内容。");
-            JSONObject sRead = new JSONObject();
-            sRead.put("type", "object");
             JSONObject pRead = new JSONObject();
             JSONObject prp = new JSONObject();
             prp.put("type", "string");
             prp.put("description", "文件绝对路径（如 /data/data/com.termux/files/home/...）");
             pRead.put("path", prp);
-            sRead.put("properties", pRead);
-            JSONArray rRead = new JSONArray();
-            rRead.put("path");
-            sRead.put("required", rRead);
-            tRead.put("inputSchema", sRead);
+            tRead.put("inputSchema", createToolSchema(pRead, new String[]{"path"}));
             tools.put(tRead);
 
             JSONObject tWrite = new JSONObject();
             tWrite.put("name", "write_file");
             tWrite.put("description", "向手机中写入或修改文件内容。");
-            JSONObject sWrite = new JSONObject();
-            sWrite.put("type", "object");
             JSONObject pWrite = new JSONObject();
             JSONObject pwp = new JSONObject();
             pwp.put("type", "string");
@@ -1023,26 +1046,18 @@ public class TermuxMcpServer {
             pwa.put("type", "boolean");
             pwa.put("description", "是否为追加模式（默认 false 为全量覆写）");
             pWrite.put("append", pwa);
-            sWrite.put("properties", pWrite);
-            JSONArray rWrite = new JSONArray();
-            rWrite.put("path");
-            rWrite.put("content");
-            sWrite.put("required", rWrite);
-            tWrite.put("inputSchema", sWrite);
+            tWrite.put("inputSchema", createToolSchema(pWrite, new String[]{"path", "content"}));
             tools.put(tWrite);
 
             JSONObject tList = new JSONObject();
             tList.put("name", "list_directory");
             tList.put("description", "列出手机指定文件夹的文件与子目录列表。");
-            JSONObject sList = new JSONObject();
-            sList.put("type", "object");
             JSONObject pList = new JSONObject();
             JSONObject plp = new JSONObject();
             plp.put("type", "string");
             plp.put("description", "文件夹路径（默认 Termux 家目录）");
             pList.put("path", plp);
-            sList.put("properties", pList);
-            tList.put("inputSchema", sList);
+            tList.put("inputSchema", createToolSchema(pList, null));
             tools.put(tList);
         }
 
@@ -1051,10 +1066,7 @@ public class TermuxMcpServer {
             JSONObject tSys = new JSONObject();
             tSys.put("name", "get_system_info");
             tSys.put("description", "查询手机硬件型号、Android 版本、可用运存、存储剩余及电池状态。");
-            JSONObject sSys = new JSONObject();
-            sSys.put("type", "object");
-            sSys.put("properties", new JSONObject());
-            tSys.put("inputSchema", sSys);
+            tSys.put("inputSchema", createToolSchema(new JSONObject(), null));
             tools.put(tSys);
         }
 
@@ -1063,27 +1075,18 @@ public class TermuxMcpServer {
             JSONObject tGetClip = new JSONObject();
             tGetClip.put("name", "get_clipboard");
             tGetClip.put("description", "读取手机 Android 系统剪贴板中当前保存的文本内容。");
-            JSONObject sGetClip = new JSONObject();
-            sGetClip.put("type", "object");
-            sGetClip.put("properties", new JSONObject());
-            tGetClip.put("inputSchema", sGetClip);
+            tGetClip.put("inputSchema", createToolSchema(new JSONObject(), null));
             tools.put(tGetClip);
 
             JSONObject tSetClip = new JSONObject();
             tSetClip.put("name", "set_clipboard");
             tSetClip.put("description", "向手机 Android 系统剪贴板写入文本内容，方便用户在手机上直接粘贴。");
-            JSONObject sSetClip = new JSONObject();
-            sSetClip.put("type", "object");
             JSONObject pSetClip = new JSONObject();
             JSONObject pct = new JSONObject();
             pct.put("type", "string");
             pct.put("description", "要复制到剪贴板的文字内容");
             pSetClip.put("text", pct);
-            sSetClip.put("properties", pSetClip);
-            JSONArray rSetClip = new JSONArray();
-            rSetClip.put("text");
-            sSetClip.put("required", rSetClip);
-            tSetClip.put("inputSchema", sSetClip);
+            tSetClip.put("inputSchema", createToolSchema(pSetClip, new String[]{"text"}));
             tools.put(tSetClip);
         }
 
@@ -1092,18 +1095,12 @@ public class TermuxMcpServer {
             JSONObject tTorch = new JSONObject();
             tTorch.put("name", "termux_torch");
             tTorch.put("description", "控制开启或关闭手机后置闪光灯/手电筒。");
-            JSONObject sTorch = new JSONObject();
-            sTorch.put("type", "object");
             JSONObject pTorch = new JSONObject();
             JSONObject pte = new JSONObject();
             pte.put("type", "boolean");
             pte.put("description", "true 为开启手电筒，false 为关闭手电筒");
             pTorch.put("enabled", pte);
-            sTorch.put("properties", pTorch);
-            JSONArray rTorch = new JSONArray();
-            rTorch.put("enabled");
-            sTorch.put("required", rTorch);
-            tTorch.put("inputSchema", sTorch);
+            tTorch.put("inputSchema", createToolSchema(pTorch, new String[]{"enabled"}));
             tools.put(tTorch);
         }
 
@@ -1112,18 +1109,12 @@ public class TermuxMcpServer {
             JSONObject tTts = new JSONObject();
             tTts.put("name", "termux_tts_speak");
             tTts.put("description", "通过手机扬声器使用语音合成(TTS)直接朗读指定文本内容。");
-            JSONObject sTts = new JSONObject();
-            sTts.put("type", "object");
             JSONObject pTts = new JSONObject();
             JSONObject ptt = new JSONObject();
             ptt.put("type", "string");
             ptt.put("description", "要朗读的文本字符串");
             pTts.put("text", ptt);
-            sTts.put("properties", pTts);
-            JSONArray rTts = new JSONArray();
-            rTts.put("text");
-            sTts.put("required", rTts);
-            tTts.put("inputSchema", sTts);
+            tTts.put("inputSchema", createToolSchema(pTts, new String[]{"text"}));
             tools.put(tTts);
         }
 
@@ -1132,8 +1123,6 @@ public class TermuxMcpServer {
             JSONObject tNoti = new JSONObject();
             tNoti.put("name", "termux_notify");
             tNoti.put("description", "在手机 Android 状态栏弹出一条系统通知提醒。");
-            JSONObject sNoti = new JSONObject();
-            sNoti.put("type", "object");
             JSONObject pNoti = new JSONObject();
             JSONObject pnt = new JSONObject();
             pnt.put("type", "string");
@@ -1143,42 +1132,29 @@ public class TermuxMcpServer {
             pnc.put("type", "string");
             pnc.put("description", "通知正文内容");
             pNoti.put("content", pnc);
-            sNoti.put("properties", pNoti);
-            JSONArray rNoti = new JSONArray();
-            rNoti.put("content");
-            sNoti.put("required", rNoti);
-            tNoti.put("inputSchema", sNoti);
+            tNoti.put("inputSchema", createToolSchema(pNoti, new String[]{"content"}));
             tools.put(tNoti);
 
             JSONObject tToast = new JSONObject();
             tToast.put("name", "termux_toast");
             tToast.put("description", "在手机屏幕中央弹出一个轻量的浮动气泡提示(Toast)。");
-            JSONObject sToast = new JSONObject();
-            sToast.put("type", "object");
             JSONObject pToast = new JSONObject();
             JSONObject ptm = new JSONObject();
             ptm.put("type", "string");
             ptm.put("description", "浮动气泡展示的文字内容");
             pToast.put("message", ptm);
-            sToast.put("properties", pToast);
-            JSONArray rToast = new JSONArray();
-            rToast.put("message");
-            sToast.put("required", rToast);
-            tToast.put("inputSchema", sToast);
+            tToast.put("inputSchema", createToolSchema(pToast, new String[]{"message"}));
             tools.put(tToast);
 
             JSONObject tVib = new JSONObject();
             tVib.put("name", "termux_vibrate");
             tVib.put("description", "让手机震动指定时长。");
-            JSONObject sVib = new JSONObject();
-            sVib.put("type", "object");
             JSONObject pVib = new JSONObject();
             JSONObject pvd = new JSONObject();
             pvd.put("type", "integer");
             pvd.put("description", "震动时长（毫秒，默认 500）");
             pVib.put("duration_ms", pvd);
-            sVib.put("properties", pVib);
-            tVib.put("inputSchema", sVib);
+            tVib.put("inputSchema", createToolSchema(pVib, null));
             tools.put(tVib);
         }
 
@@ -1187,18 +1163,12 @@ public class TermuxMcpServer {
             JSONObject tUrl = new JSONObject();
             tUrl.put("name", "open_url");
             tUrl.put("description", "在手机系统默认浏览器中打开指定网页链接。");
-            JSONObject sUrl = new JSONObject();
-            sUrl.put("type", "object");
             JSONObject pUrl = new JSONObject();
             JSONObject pu = new JSONObject();
             pu.put("type", "string");
             pu.put("description", "要打开的网页 URL（如 https://...）");
             pUrl.put("url", pu);
-            sUrl.put("properties", pUrl);
-            JSONArray rUrl = new JSONArray();
-            rUrl.put("url");
-            sUrl.put("required", rUrl);
-            tUrl.put("inputSchema", sUrl);
+            tUrl.put("inputSchema", createToolSchema(pUrl, new String[]{"url"}));
             tools.put(tUrl);
         }
 
@@ -1207,8 +1177,6 @@ public class TermuxMcpServer {
             JSONObject tDown = new JSONObject();
             tDown.put("name", "download_file");
             tDown.put("description", "从互联网极速下载文件并保存至手机指定路径（默认 Download 目录）。");
-            JSONObject sDown = new JSONObject();
-            sDown.put("type", "object");
             JSONObject pDown = new JSONObject();
             JSONObject pdu = new JSONObject();
             pdu.put("type", "string");
@@ -1218,11 +1186,7 @@ public class TermuxMcpServer {
             pdd.put("type", "string");
             pdd.put("description", "手机端保存路径（可选，默认 /sdcard/Download/文件名）");
             pDown.put("dest_path", pdd);
-            sDown.put("properties", pDown);
-            JSONArray rDown = new JSONArray();
-            rDown.put("url");
-            sDown.put("required", rDown);
-            tDown.put("inputSchema", sDown);
+            tDown.put("inputSchema", createToolSchema(pDown, new String[]{"url"}));
             tools.put(tDown);
         }
 
