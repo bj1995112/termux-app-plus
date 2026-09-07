@@ -689,7 +689,7 @@ public class TermuxMcpActivity extends AppCompatActivity {
         proxyTextCol.addView(tvProxyLabel);
 
         TextView tvProxyHint = new TextView(this);
-        tvProxyHint.setText("若手机直连受限，可指定本地代理（如 http://127.0.0.1:7890，留空则走系统网络）");
+        tvProxyHint.setText("已开启智能嗅探：推荐留空，App 将自动适配本机 v2rayNG / Clash，无需配置");
         tvProxyHint.setTextSize(12);
         tvProxyHint.setTextColor(mTextColorSecondary);
         proxyTextCol.addView(tvProxyHint);
@@ -714,7 +714,7 @@ public class TermuxMcpActivity extends AppCompatActivity {
         proxyBtnRow.setGravity(Gravity.END);
 
         MaterialButton btnEditProxy = new MaterialButton(this);
-        btnEditProxy.setText("配置代理");
+        btnEditProxy.setText("指定代理");
         btnEditProxy.setTextSize(11);
         btnEditProxy.setOnClickListener(v -> showEditOpenAiProxyDialog());
         proxyBtnRow.addView(btnEditProxy);
@@ -724,12 +724,12 @@ public class TermuxMcpActivity extends AppCompatActivity {
         proxyBtnRow.addView(spacerProxyBtn);
 
         MaterialButton btnClearProxy = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
-        btnClearProxy.setText("清空代理");
+        btnClearProxy.setText("恢复自动检测");
         btnClearProxy.setTextSize(11);
         btnClearProxy.setOnClickListener(v -> {
             OpenAiTunnelManager.getInstance().setProxy(this, "");
             refreshUI();
-            Toast.makeText(this, "已清除前置代理（将使用直连）", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "已恢复【全自动智能代理模式】", Toast.LENGTH_SHORT).show();
         });
         proxyBtnRow.addView(btnClearProxy);
         openAiLayout.addView(proxyBtnRow);
@@ -1118,7 +1118,7 @@ public class TermuxMcpActivity extends AppCompatActivity {
         }
 
         String proxy = openAiMgr.getProxy(this);
-        mTvOpenAiProxy.setText(proxy.isEmpty() ? "（未配置 · 默认直接走系统网络）" : proxy);
+        mTvOpenAiProxy.setText(proxy.isEmpty() ? "（全自动智能嗅探模式 · 自动对接 v2rayNG / Clash，无需配置）" : proxy);
     }
 
     private void showEditPublicHostDialog() {
@@ -1198,19 +1198,23 @@ public class TermuxMcpActivity extends AppCompatActivity {
         final EditText input = new EditText(this);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         String curr = manager.getProxy(this);
-        input.setText(curr.isEmpty() ? "http://127.0.0.1:7890" : curr);
-        input.setHint("如: http://127.0.0.1:7890");
+        input.setText(curr);
+        input.setHint("推荐留空自动检测（如 v2rayNG:10808, Clash:7890）");
         input.setSelectAllOnFocus(true);
 
         new AlertDialog.Builder(this)
-            .setTitle("配置出站前置代理 (科学上网)")
-            .setMessage("若手机直连 OpenAI 服务器受限，可填入本地代理端口（如 Clash/V2Ray 提供的 HTTP 代理地址）：")
+            .setTitle("前置代理 (推荐留空自动检测)")
+            .setMessage("手机已运行 v2rayNG 或 Clash 时，保持留空即可，App 将自动完成对接。\n\n如需指定特殊端口，可填入（如 socks5://127.0.0.1:10808 或 http://127.0.0.1:7890）：")
             .setView(input)
             .setPositiveButton(android.R.string.ok, (dialog, which) -> {
                 String val = input.getText().toString().trim();
                 manager.setProxy(this, val);
                 refreshUI();
-                Toast.makeText(this, "已保存前置代理配置", Toast.LENGTH_SHORT).show();
+                if (val.isEmpty()) {
+                    Toast.makeText(this, "已切换为【全自动智能代理模式】", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, "已保存指定前置代理", Toast.LENGTH_SHORT).show();
+                }
             })
             .setNegativeButton(android.R.string.cancel, null)
             .show();

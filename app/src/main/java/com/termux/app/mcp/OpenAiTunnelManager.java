@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Base64;
 
 import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.TermuxConstants;
@@ -13,7 +14,11 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
+import java.security.cert.X509Certificate;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -23,11 +28,16 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.zip.GZIPInputStream;
 
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509TrustManager;
+
 /**
  * OpenAI 官方原生 Secure MCP Tunnel (openai/tunnel-client) 独立管理器：
  * 1. 自动从 assets/bin 解压并赋予可执行权限 (+x)；
- * 2. 负责守护 tunnel-client 进程，出站直连 OpenAI 控制面；
- * 3. 收集最新运行日志与连通状态，支持前置 HTTP/HTTPS 代理配置。
+ * 2. 自动导出/注入 Android 根证书 Bundle (解决 x509 unknown authority)；
+ * 3. 智能嗅探本地代理 (v2rayNG:10808, Clash:7890 等)，零配置开箱即用；
+ * 4. 守护 tunnel-client 进程，出站直连 OpenAI 控制面，规范化 channel=main 与 Token。
  */
 public class OpenAiTunnelManager {
 
@@ -41,7 +51,7 @@ public class OpenAiTunnelManager {
 
     public enum TunnelState {
         STOPPED("未运行"),
-        STARTING("正在启动与释放..."),
+        STARTING("正在启动与适配环境..."),
         CONNECTING("正在连接 OpenAI 控制面..."),
         CONNECTED("已连接至 OpenAI 官方隧道 (ChatGPT 就绪)"),
         ERROR("连接异常");
@@ -51,12 +61,35 @@ public class OpenAiTunnelManager {
         public String getDesc() { return desc; }
     }
 
+    public static class ProxyInfo {
+        public final String scheme; // "socks5" or "http"
+        public final String host;
+        public final int port;
+        public final String name;
+
+        public ProxyInfo(String scheme, String host, int port, String name) {
+            this.scheme = scheme;
+            this.host = host;
+            this.port = port;
+            this.name = name;
+        }
+
+        public String getUrl() {
+            return scheme + "://" + host + ":" + port;
+        }
+
+        @Override
+        public String toString() {
+            return name + " (" + getUrl() + ")";
+        }
+    }
+
     private static volatile OpenAiTunnelManager sInstance;
 
     private Process mProcess;
     private volatile TunnelState mState = TunnelState.STOPPED;
     private volatile String mLastError = "";
-    private final Deque<String> mLogBuffer = new ArrayDeque<>(100);
+    private final Deque<String> mLogBuffer = new ArrayDeque<>(150);
     private final ExecutorService mThreadPool = Executors.newCachedThreadPool();
 
     public interface StateListener {
@@ -192,6 +225,103 @@ public class OpenAiTunnelManager {
     }
 
     /**
+     * 检测本地指定端口是否处于监听状态
+     */
+    private static boolean isPortListening(String host, int port) {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(host, port), 60);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * 智能嗅探本地常见代理客户端
+     */
+    public static ProxyInfo detectLocalProxy() {
+        // 1. v2rayNG / Xray SOCKS5 (默认 10808)
+        if (isPortListening("127.0.0.1", 10808)) {
+            return new ProxyInfo("socks5", "127.0.0.1", 10808, "v2rayNG/Xray SOCKS5");
+        }
+        // 2. Clash / Mihomo HTTP / Mixed (默认 7890)
+        if (isPortListening("127.0.0.1", 7890)) {
+            return new ProxyInfo("http", "127.0.0.1", 7890, "Clash HTTP/Mixed");
+        }
+        // 3. v2rayNG / Xray HTTP (默认 10809)
+        if (isPortListening("127.0.0.1", 10809)) {
+            return new ProxyInfo("http", "127.0.0.1", 10809, "v2rayNG HTTP");
+        }
+        // 4. sing-box SOCKS5/Mixed (默认 2080)
+        if (isPortListening("127.0.0.1", 2080)) {
+            return new ProxyInfo("socks5", "127.0.0.1", 2080, "sing-box SOCKS5");
+        }
+        // 5. Clash SOCKS5 (默认 7891)
+        if (isPortListening("127.0.0.1", 7891)) {
+            return new ProxyInfo("socks5", "127.0.0.1", 7891, "Clash SOCKS5");
+        }
+        // 6. Shadowsocks SOCKS5 (默认 1080)
+        if (isPortListening("127.0.0.1", 1080)) {
+            return new ProxyInfo("socks5", "127.0.0.1", 1080, "Shadowsocks SOCKS5");
+        }
+        return null;
+    }
+
+    /**
+     * 确保本地拥有合法的 PEM 格式 CA 根证书 bundle
+     */
+    public static synchronized File ensureCaBundle(Context context) {
+        // 1. 优先检查 Termux 自带根证书
+        File termuxCert = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/etc/tls/cert.pem");
+        if (termuxCert.exists() && termuxCert.length() > 10240) {
+            return termuxCert;
+        }
+
+        // 2. 检查私有缓存 cacert.pem
+        File certFile = new File(context.getFilesDir(), "cacert.pem");
+        if (certFile.exists() && certFile.length() > 10240) {
+            return certFile;
+        }
+
+        // 3. 从 Android 系统 TrustManager 自动导出全部受信任 CA 证书
+        try {
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init((KeyStore) null);
+
+            StringBuilder pemBuilder = new StringBuilder();
+            for (TrustManager tm : tmf.getTrustManagers()) {
+                if (tm instanceof X509TrustManager) {
+                    X509Certificate[] issuers = ((X509TrustManager) tm).getAcceptedIssuers();
+                    if (issuers != null) {
+                        for (X509Certificate cert : issuers) {
+                            pemBuilder.append("-----BEGIN CERTIFICATE-----\n");
+                            String b64 = Base64.encodeToString(cert.getEncoded(), Base64.NO_WRAP);
+                            for (int i = 0; i < b64.length(); i += 64) {
+                                int end = Math.min(i + 64, b64.length());
+                                pemBuilder.append(b64, i, end).append("\n");
+                            }
+                            pemBuilder.append("-----END CERTIFICATE-----\n");
+                        }
+                    }
+                }
+            }
+
+            if (pemBuilder.length() > 0) {
+                try (FileOutputStream fos = new FileOutputStream(certFile)) {
+                    fos.write(pemBuilder.toString().getBytes(StandardCharsets.US_ASCII));
+                    fos.flush();
+                }
+                Logger.logInfo(LOG_TAG, "Exported " + certFile.length() + " bytes system CA certs to " + certFile.getAbsolutePath());
+                return certFile;
+            }
+        } catch (Exception e) {
+            Logger.logError(LOG_TAG, "Failed to export Android system CA bundle: " + e.getMessage());
+        }
+
+        return null;
+    }
+
+    /**
      * 启动 OpenAI 官方 Secure Tunnel 进程
      */
     public synchronized boolean startTunnel(Context context) {
@@ -227,14 +357,54 @@ public class OpenAiTunnelManager {
         cmd.add("run");
         cmd.add("--control-plane.tunnel-id");
         cmd.add(tunnelId);
+        // 关键点 1：OpenAI 官方规范要求声明 channel=main
         cmd.add("--mcp.server-url");
-        cmd.add("http://127.0.0.1:" + mcpPort + "/mcp");
+        cmd.add("url=http://127.0.0.1:" + mcpPort + "/mcp,channel=main");
         cmd.add("--health.listen-addr");
         cmd.add("127.0.0.1:0"); // 自动分配随机空闲健康端口
 
-        if (proxy != null && !proxy.isEmpty()) {
+        // 关键点 2：自动带上本地 MCP 的 Bearer 认证 Token
+        String authToken = TermuxMcpManager.getInstance().getAuthToken(context);
+        if (authToken != null && !authToken.trim().isEmpty()) {
+            cmd.add("--mcp.extra-headers");
+            cmd.add("Authorization: Bearer " + authToken.trim());
+        }
+
+        // 关键点 3：自动挂载 CA 根证书 Bundle
+        File caBundle = ensureCaBundle(context);
+        if (caBundle != null && caBundle.exists()) {
+            cmd.add("--ca-bundle");
+            cmd.add(caBundle.getAbsolutePath());
+        }
+
+        // 关键点 4：智能识别代理
+        ProxyInfo effectiveProxy = null;
+        if (proxy != null && !proxy.trim().isEmpty()) {
+            String p = proxy.trim();
+            if (p.startsWith("socks5://") || p.startsWith("socks://")) {
+                String clean = p.replace("socks5://", "").replace("socks://", "");
+                String[] parts = clean.split(":");
+                int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 10808;
+                effectiveProxy = new ProxyInfo("socks5", parts[0], port, "用户指定 SOCKS5");
+            } else if (p.startsWith("http://") || p.startsWith("https://")) {
+                String clean = p.replace("http://", "").replace("https://", "");
+                String[] parts = clean.split(":");
+                int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 7890;
+                effectiveProxy = new ProxyInfo("http", parts[0], port, "用户指定 HTTP");
+            } else if (p.contains(":")) {
+                String[] parts = p.split(":");
+                int port = Integer.parseInt(parts[1]);
+                String scheme = (port == 10808 || port == 7891 || port == 1080) ? "socks5" : "http";
+                effectiveProxy = new ProxyInfo(scheme, parts[0], port, "用户指定代理");
+            }
+        } else {
+            // 用户留空，自动智能嗅探
+            effectiveProxy = detectLocalProxy();
+        }
+
+        if (effectiveProxy != null && "http".equalsIgnoreCase(effectiveProxy.scheme)) {
             cmd.add("--http-proxy");
-            cmd.add(proxy);
+            cmd.add(effectiveProxy.getUrl());
         }
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
@@ -247,11 +417,33 @@ public class OpenAiTunnelManager {
         env.put("PATH", TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":" + System.getenv("PATH"));
         env.put("TMPDIR", TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH);
 
-        if (proxy != null && !proxy.isEmpty()) {
-            env.put("HTTPS_PROXY", proxy);
-            env.put("HTTP_PROXY", proxy);
-            env.put("https_proxy", proxy);
-            env.put("http_proxy", proxy);
+        // 注入证书环境变量
+        if (caBundle != null && caBundle.exists()) {
+            env.put("SSL_CERT_FILE", caBundle.getAbsolutePath());
+            env.put("SSL_CERT_DIR", caBundle.getParentFile().getAbsolutePath());
+            env.put("CA_BUNDLE", caBundle.getAbsolutePath());
+        }
+
+        // 注入代理环境变量 (ALL_PROXY 完美通吃 SOCKS5/HTTP 并且使 Go 代理远端 DNS)
+        if (effectiveProxy != null) {
+            String url = effectiveProxy.getUrl();
+            env.put("ALL_PROXY", url);
+            env.put("all_proxy", url);
+            env.put("HTTPS_PROXY", url);
+            env.put("HTTP_PROXY", url);
+            env.put("https_proxy", url);
+            env.put("http_proxy", url);
+        }
+
+        mLogBuffer.clear();
+        appendLog("[Termux+] 🚀 正在启动 OpenAI 官方原生安全隧道...");
+        if (caBundle != null && caBundle.exists()) {
+            appendLog("[Termux+] 🔐 已挂载 CA 根证书: " + caBundle.getName() + " (" + (caBundle.length() / 1024) + " KB)");
+        }
+        if (effectiveProxy != null) {
+            appendLog("[Termux+] 🌐 " + (proxy == null || proxy.trim().isEmpty() ? "智能嗅探到本地代理" : "使用指定代理") + ": " + effectiveProxy.toString());
+        } else {
+            appendLog("[Termux+] 🌐 未检测到本地代理端口，尝试直接网络连接");
         }
 
         try {
@@ -281,7 +473,7 @@ public class OpenAiTunnelManager {
 
     private synchronized void appendLog(String line) {
         if (line == null) return;
-        if (mLogBuffer.size() >= 100) {
+        if (mLogBuffer.size() >= 150) {
             mLogBuffer.pollFirst();
         }
         mLogBuffer.offerLast(line);
@@ -289,13 +481,22 @@ public class OpenAiTunnelManager {
 
     private void inspectLogLine(String line) {
         String lower = line.toLowerCase();
-        if (lower.contains("ready") || lower.contains("serving") || lower.contains("registered tunnel") || lower.contains("connected")) {
+        if (lower.contains("starting control-plane poller") ||
+            lower.contains("registered tunnel") ||
+            lower.contains("listening for requests") ||
+            lower.contains("tunnel ready") ||
+            lower.contains("serving") ||
+            (lower.contains("poller") && !lower.contains("failed") && !lower.contains("backing off") && !lower.contains("warn"))) {
             if (mState != TunnelState.CONNECTED) {
                 updateState(TunnelState.CONNECTED, null);
             }
         } else if (lower.contains("failed") || lower.contains("error") || lower.contains("fatal")) {
-            if (!lower.contains("retry")) {
-                mLastError = line;
+            mLastError = line;
+            if (lower.contains("certificate signed by unknown authority") ||
+                lower.contains("unsupported protocol") ||
+                lower.contains("main channel is required") ||
+                (lower.contains("lookup") && lower.contains("connection refused"))) {
+                updateState(TunnelState.ERROR, line);
             }
         }
     }
