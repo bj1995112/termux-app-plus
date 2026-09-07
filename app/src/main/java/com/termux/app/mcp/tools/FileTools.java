@@ -17,11 +17,9 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * 文件管理与 I/O 集合工具：
- * 包含通用 file、read_file、write_file、list_directory，并具备大文件安全截断保护。
+ * 包含通用 file、read_file、write_file、list_directory 原生读写。
  */
 public class FileTools {
-
-    public static final int MAX_FILE_READ_BYTES = 2 * 1024 * 1024; // 单次读取上限 2MB，防止大文件 OOM
 
     public static String readFileContent(String path) {
         if (path == null || path.trim().isEmpty()) {
@@ -35,29 +33,14 @@ public class FileTools {
             return "错误：指定路径是目录而非文件: " + path;
         }
 
-        long length = file.length();
-        boolean isTruncated = false;
-        int readLimit = (int) Math.min(length, MAX_FILE_READ_BYTES);
-        if (length > MAX_FILE_READ_BYTES) {
-            isTruncated = true;
-        }
-
         try (FileInputStream fis = new FileInputStream(file);
              InputStreamReader isr = new InputStreamReader(fis, StandardCharsets.UTF_8);
              BufferedReader reader = new BufferedReader(isr)) {
 
             StringBuilder sb = new StringBuilder();
-            char[] buf = new char[4096];
-            int totalRead = 0;
-            int r;
-            while ((r = reader.read(buf, 0, Math.min(buf.length, readLimit - totalRead))) > 0) {
-                sb.append(buf, 0, r);
-                totalRead += r;
-                if (totalRead >= readLimit) break;
-            }
-
-            if (isTruncated) {
-                sb.append("\n\n[... 警告：文件过大（共 ").append(length).append(" 字节），已截断前 2MB 内容以防止 OOM ...]");
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line).append("\n");
             }
             return sb.toString();
         } catch (Exception e) {

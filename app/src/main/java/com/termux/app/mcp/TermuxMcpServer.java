@@ -117,14 +117,7 @@ public class TermuxMcpServer {
         // 绑定 0.0.0.0，允许 Wi-Fi 局域网及穿透外网连接
         mServerSocket.bind(new InetSocketAddress("0.0.0.0", mPort));
         mRunning = true;
-        // 有界线程池，防止并发堆积耗尽系统资源与 OOM
-        mThreadPool = new ThreadPoolExecutor(
-            8,
-            32,
-            60L, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<>(128),
-            new ThreadPoolExecutor.CallerRunsPolicy()
-        );
+        mThreadPool = Executors.newCachedThreadPool();
 
         Logger.logInfo(LOG_TAG, "TermuxMcpServer started on port " + mPort);
 
@@ -311,7 +304,7 @@ public class TermuxMcpServer {
                 }
 
                 // 6. 路由分发
-                if (path.equals("/mcp")) {
+                if (path.equals("/mcp") || path.equals("/mcp/")) {
                     // 最新标准 Streamable HTTP 单端点 (2026 MCP 规范：支持 POST 消息、GET 事件流、DELETE 会话清理)
                     if ("GET".equalsIgnoreCase(method)) {
                         handleMcpGet(out, socket, headers, queryParams);
@@ -472,9 +465,9 @@ public class TermuxMcpServer {
         String respHeader = "HTTP/1.1 200 OK\r\n" +
             "Content-Type: text/event-stream\r\n" +
             "Cache-Control: no-cache, no-transform\r\n" +
-            "Connection: keep-alive\r\n" +
+            "Connection: close\r\n" +
             "x-accel-buffering: no\r\n" +
-            "mcp-session-id: " + sessionId + "\r\n" +
+            "Mcp-Session-Id: " + sessionId + "\r\n" +
             "Transfer-Encoding: chunked\r\n" +
             "Access-Control-Allow-Origin: *\r\n\r\n";
 
@@ -560,11 +553,20 @@ public class TermuxMcpServer {
             String proto = "https".equalsIgnoreCase(headers.get("x-forwarded-proto")) ? "https" : "http";
             String baseUrl = proto + "://" + host;
 
+            String publicHost = TermuxMcpManager.getInstance().getPublicHost(mContext);
+            boolean hasPublicOAuth = publicHost != null && !publicHost.isEmpty() && !publicHost.contains("127.0.0.1");
+
             if (path != null && path.contains("oauth-protected-resource")) {
+                if (!hasPublicOAuth) {
+                    // 当未配置合法公网 OAuth 域名时，严格返回 404。
+                    // OpenAI tunnel-client 规范：当 protected-resource 返回 404 时，立即判定为合法免密/Token MCP 达到 Ready 状态，严防陷入 Degraded。
+                    sendJsonResponse(out, 404, "{\"error\": \"OAuth protected resource not configured for local tunnel, fallback to plain MCP\"}");
+                    return;
+                }
                 // RFC 9728 OAuth 2.0 Protected Resource Metadata
                 JSONObject resMeta = new JSONObject();
-                resMeta.put("resource", baseUrl + "/mcp");
-                resMeta.put("authorization_servers", new JSONArray().put(baseUrl));
+                resMeta.put("resource", publicHost + "/mcp");
+                resMeta.put("authorization_servers", new JSONArray().put(publicHost));
                 resMeta.put("scopes_supported", new JSONArray().put("execute").put("read").put("system"));
                 resMeta.put("bearer_methods_supported", new JSONArray().put("header"));
                 sendJsonResponse(out, 200, resMeta.toString(2));

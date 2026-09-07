@@ -12,19 +12,14 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
  * 终端 Shell 命令执行工具：
- * 1. 注入完整 Termux Linux 运行环境变量（PATH, PREFIX, LD_PRELOAD 等）；
- * 2. 内置执行引擎优化：具备 256KB 有界缓冲区防止超大输出导致内存溢出 (OOM)；
- * 3. 严格的超时中断机制，防止子进程僵死耗尽系统资源。
+ * 注入完整 Termux Linux 运行环境变量（PATH, PREFIX, LD_PRELOAD 等），原生异步收集命令回显。
  */
 public class ShellTool implements McpTool {
-
-    public static final int MAX_OUTPUT_BYTES = 256 * 1024; // 最大输出缓冲限制为 256KB
 
     @Override
     public String getName() {
@@ -96,44 +91,11 @@ public class ShellTool implements McpTool {
         return runShellCommand(command, cwdStr, timeout);
     }
 
-    /**
-     * 带有限流与截断保护的流拷贝收集器
-     */
-    private static class BoundedBuffer {
-        private final ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        private int totalBytesRead = 0;
-        private boolean truncated = false;
-
-        public synchronized void write(byte[] b, int off, int len) {
-            totalBytesRead += len;
-            if (baos.size() < MAX_OUTPUT_BYTES) {
-                int toWrite = Math.min(len, MAX_OUTPUT_BYTES - baos.size());
-                baos.write(b, off, toWrite);
-                if (toWrite < len) {
-                    truncated = true;
-                }
-            } else {
-                truncated = true;
-            }
-        }
-
-        public synchronized String toStringUtf8() {
-            String str = new String(baos.toByteArray(), StandardCharsets.UTF_8);
-            if (truncated) {
-                str += "\n\n[... 警告：命令输出已超过 " + (MAX_OUTPUT_BYTES / 1024) + "KB 限制，剩余输出已被截断以防止 OOM ...]";
-            }
-            return str;
-        }
-
-        public synchronized boolean isEmpty() {
-            return baos.size() == 0;
-        }
-    }
-
-    /**
-     * 在 Termux 完整环境中执行 Shell 命令
-     */
     public String runShellCommand(String command, String cwdStr, int timeoutMs) {
+        if (command == null || command.trim().isEmpty()) {
+            return "错误：命令行不能为空";
+        }
+
         File cwd = new File(cwdStr != null && !cwdStr.isEmpty() ? cwdStr : TermuxConstants.TERMUX_HOME_DIR_PATH);
         if (!cwd.exists()) {
             cwd = new File(TermuxConstants.TERMUX_HOME_DIR_PATH);
@@ -166,18 +128,19 @@ public class ShellTool implements McpTool {
         try {
             Process process = pb.start();
 
-            BoundedBuffer outBuffer = new BoundedBuffer();
-            BoundedBuffer errBuffer = new BoundedBuffer();
+            // 异步并发收集 stdout 和 stderr
+            ByteArrayOutputStream outStream = new ByteArrayOutputStream();
+            ByteArrayOutputStream errStream = new ByteArrayOutputStream();
 
-            Thread tOut = new Thread(() -> readStreamBounded(process.getInputStream(), outBuffer));
-            Thread tErr = new Thread(() -> readStreamBounded(process.getErrorStream(), errBuffer));
+            Thread tOut = new Thread(() -> copyStream(process.getInputStream(), outStream));
+            Thread tErr = new Thread(() -> copyStream(process.getErrorStream(), errStream));
             tOut.start();
             tErr.start();
 
             boolean finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS);
             if (!finished) {
                 process.destroyForcibly();
-                return "执行超时（限制: " + timeoutMs + "ms，已强制终止进程）";
+                return "执行超时（限制: " + timeoutMs + "ms）";
             }
 
             try {
@@ -186,17 +149,15 @@ public class ShellTool implements McpTool {
             } catch (InterruptedException ignored) {}
 
             int exitCode = process.exitValue();
-            String stdout = outBuffer.toStringUtf8();
-            String stderr = errBuffer.toStringUtf8();
+            String stdout = outStream.toString("UTF-8");
+            String stderr = errStream.toString("UTF-8");
 
             StringBuilder sb = new StringBuilder();
             if (!stdout.isEmpty()) {
                 sb.append(stdout);
             }
             if (!stderr.isEmpty()) {
-                if (sb.length() > 0 && !sb.toString().endsWith("\n")) {
-                    sb.append("\n");
-                }
+                if (sb.length() > 0 && !sb.toString().endsWith("\n")) sb.append("\n");
                 sb.append("[stderr]:\n").append(stderr);
             }
             if (exitCode != 0) {
@@ -209,16 +170,14 @@ public class ShellTool implements McpTool {
         }
     }
 
-    private void readStreamBounded(InputStream in, BoundedBuffer buffer) {
+    private static void copyStream(InputStream in, OutputStream out) {
         try {
             byte[] buf = new byte[4096];
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                buffer.write(buf, 0, n);
+            int len;
+            while ((len = in.read(buf)) > 0) {
+                out.write(buf, 0, len);
             }
-        } catch (Exception ignored) {
-        } finally {
-            try { in.close(); } catch (Exception ignored) {}
-        }
+            out.flush();
+        } catch (Exception ignored) {}
     }
 }
