@@ -107,6 +107,20 @@ public class TermuxMcpServer {
     // 已颁发的有效 OAuth Access Token 缓存 (token -> expiresAt)
     private final Map<String, Long> mOAuthTokens = new ConcurrentHashMap<>();
 
+    // MCP Streamable HTTP 活跃会话记录
+    private static class McpSession {
+        final String sessionId;
+        final long createdAt;
+        volatile long lastActiveAt;
+
+        McpSession(String sessionId) {
+            this.sessionId = sessionId;
+            this.createdAt = System.currentTimeMillis();
+            this.lastActiveAt = this.createdAt;
+        }
+    }
+    private final Map<String, McpSession> mSessions = new ConcurrentHashMap<>();
+
     public TermuxMcpServer(Context context, int port, String token) {
         this.mContext = context;
         this.mPort = port;
@@ -155,6 +169,7 @@ public class TermuxMcpServer {
             mThreadPool = null;
         }
         mSseSessions.clear();
+        mSessions.clear();
         mAuthCodes.clear();
         mOAuthTokens.clear();
         Logger.logInfo(LOG_TAG, "TermuxMcpServer stopped.");
@@ -264,7 +279,7 @@ public class TermuxMcpServer {
                     path.startsWith("/oauth/authorize") ||
                     path.equals("/oauth/token");
 
-                if (!isPublicEndpoint && !isAuthorized(headers, queryParams)) {
+                if (!isPublicEndpoint && !isAuthorized(socket, headers, queryParams)) {
                     sendUnauthorizedResponse(out);
                     break;
                 }
@@ -329,9 +344,13 @@ public class TermuxMcpServer {
         }
     }
 
-    private boolean isAuthorized(Map<String, String> headers, Map<String, String> queryParams) {
+    private boolean isAuthorized(Socket socket, Map<String, String> headers, Map<String, String> queryParams) {
         if (mToken == null || mToken.isEmpty()) {
             return true; // 未设 Token，免密开放
+        }
+        // 关键防护：本地回环地址（127.0.0.1）直连请求（如 OpenAI tunnel-client 隧道代理转发），直接授信放行
+        if (socket != null && socket.getInetAddress() != null && socket.getInetAddress().isLoopbackAddress()) {
+            return true;
         }
         // 1. 检查 Authorization: Bearer <token>
         String authHeader = headers.get("authorization");
@@ -404,6 +423,30 @@ public class TermuxMcpServer {
             "Access-Control-Allow-Origin: *\r\n" +
             "Content-Length: 0\r\n\r\n";
         out.write(resp.getBytes(StandardCharsets.UTF_8));
+        out.flush();
+    }
+
+    /**
+     * 按照 MCP 官方 Streamable HTTP 标准（RFC 7230 分块传输编码 + text/event-stream 流式封装）输出响应
+     */
+    private void sendChunkedSseResponse(OutputStream out, String sessionId, String sseEvent) throws IOException {
+        byte[] payload = sseEvent.getBytes(StandardCharsets.UTF_8);
+        String chunkHeader = Integer.toHexString(payload.length) + "\r\n";
+        String chunkFooter = "\r\n0\r\n\r\n";
+
+        String respHeader = "HTTP/1.1 200 OK\r\n" +
+            "Content-Type: text/event-stream\r\n" +
+            "Cache-Control: no-cache, no-transform\r\n" +
+            "Connection: keep-alive\r\n" +
+            "x-accel-buffering: no\r\n" +
+            "mcp-session-id: " + sessionId + "\r\n" +
+            "Transfer-Encoding: chunked\r\n" +
+            "Access-Control-Allow-Origin: *\r\n\r\n";
+
+        out.write(respHeader.getBytes(StandardCharsets.UTF_8));
+        out.write(chunkHeader.getBytes(StandardCharsets.UTF_8));
+        out.write(payload);
+        out.write(chunkFooter.getBytes(StandardCharsets.UTF_8));
         out.flush();
     }
 
@@ -762,12 +805,6 @@ public class TermuxMcpServer {
         if ((sessionId == null || sessionId.isEmpty()) && queryParams != null) {
             sessionId = queryParams.get("sessionId");
         }
-        if (sessionId == null || sessionId.isEmpty()) {
-            sessionId = UUID.randomUUID().toString();
-        }
-
-        String accept = headers != null ? headers.get("accept") : "";
-        boolean clientWantsSse = accept != null && accept.contains("text/event-stream");
 
         try {
             JSONObject req = new JSONObject(body);
@@ -778,6 +815,19 @@ public class TermuxMcpServer {
             if (id == null || method.startsWith("notifications/")) {
                 sendEmptyResponse(out, 202);
                 return;
+            }
+
+            // 会话状态机：如果是 initialize，生成全新的 Mcp-Session-Id；若是后续请求，保持/刷新对应会话
+            if ("initialize".equals(method) || "server/discover".equals(method) || sessionId == null || sessionId.isEmpty()) {
+                sessionId = UUID.randomUUID().toString();
+                mSessions.put(sessionId, new McpSession(sessionId));
+            } else {
+                McpSession s = mSessions.get(sessionId);
+                if (s != null) {
+                    s.lastActiveAt = System.currentTimeMillis();
+                } else {
+                    mSessions.put(sessionId, new McpSession(sessionId));
+                }
             }
 
             JSONObject resp = new JSONObject();
@@ -867,9 +917,8 @@ public class TermuxMcpServer {
                     break;
             }
 
-            // 2. 如果有活跃的 SSE 会话（比如 OpenAI 客户端正在监听 /sse）：
-            //    必须通过 SSE 事件通道下发 JSON-RPC 响应数据：event: message\r\ndata: <JSON>\r\n\r\n
-            boolean sentOverSse = false;
+            // 2. 如果有活跃的传统 SSE 会话（比如客户端正在长连接监听 /sse）：
+            //    同时通过 SSE 事件通道广播 JSON-RPC 响应
             if (sessionId != null && mSseSessions.containsKey(sessionId)) {
                 OutputStream sseOut = mSseSessions.get(sessionId);
                 if (sseOut != null) {
@@ -878,46 +927,20 @@ public class TermuxMcpServer {
                             String sseMsg = "event: message\r\ndata: " + resp.toString() + "\r\n\r\n";
                             sseOut.write(sseMsg.getBytes(StandardCharsets.UTF_8));
                             sseOut.flush();
-                            sentOverSse = true;
                         }
                     } catch (Exception e) {
-                        Logger.logError(LOG_TAG, "Error writing to SSE session " + sessionId + ": " + e.getMessage());
                         mSseSessions.remove(sessionId);
                     }
                 }
             }
 
-            if (!sentOverSse && !mSseSessions.isEmpty() && !"/mcp".equals(path)) {
-                for (Map.Entry<String, OutputStream> entry : mSseSessions.entrySet()) {
-                    try {
-                        OutputStream sseOut = entry.getValue();
-                        synchronized (sseOut) {
-                            String sseMsg = "event: message\r\ndata: " + resp.toString() + "\r\n\r\n";
-                            sseOut.write(sseMsg.getBytes(StandardCharsets.UTF_8));
-                            sseOut.flush();
-                            sentOverSse = true;
-                        }
-                    } catch (Exception e) {
-                        mSseSessions.remove(entry.getKey());
-                    }
-                }
-            }
-
-            // 3. 对于当前 HTTP POST 请求连接本身的响应：
-            //    若客户端请求头声明接收 text/event-stream (如 ChatGPT 官方 MCP 客户端)，返回 SSE 帧与 Mcp-Session-Id
-            if (clientWantsSse) {
+            // 3. 对于当前 HTTP POST /mcp 请求连接本身的响应：
+            //    按照官方 Streamable HTTP 标准（RFC 7230 分块传输编码 + text/event-stream 流式封装）输出
+            String accept = headers != null ? headers.get("accept") : "";
+            boolean isMcpEndpoint = path != null && path.contains("/mcp");
+            if (isMcpEndpoint || (accept != null && accept.contains("text/event-stream"))) {
                 String sseData = "event: message\r\ndata: " + resp.toString() + "\r\n\r\n";
-                byte[] rawBytes = sseData.getBytes(StandardCharsets.UTF_8);
-                String respHeader = "HTTP/1.1 200 OK\r\n" +
-                    "Content-Type: text/event-stream\r\n" +
-                    "Cache-Control: no-cache, no-transform\r\n" +
-                    "Connection: keep-alive\r\n" +
-                    "Mcp-Session-Id: " + sessionId + "\r\n" +
-                    "Access-Control-Allow-Origin: *\r\n" +
-                    "Content-Length: " + rawBytes.length + "\r\n\r\n";
-                out.write(respHeader.getBytes(StandardCharsets.UTF_8));
-                out.write(rawBytes);
-                out.flush();
+                sendChunkedSseResponse(out, sessionId, sseData);
             } else {
                 byte[] rawBytes = resp.toString().getBytes(StandardCharsets.UTF_8);
                 String respHeader = "HTTP/1.1 200 OK\r\n" +
