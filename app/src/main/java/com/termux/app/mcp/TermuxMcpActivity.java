@@ -69,6 +69,7 @@ public class TermuxMcpActivity extends AppCompatActivity {
 
     private int mTextColorPrimary;
     private int mTextColorSecondary;
+    private boolean mIsUpdatingUi = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -996,35 +997,32 @@ public class TermuxMcpActivity extends AppCompatActivity {
         // 开关事件绑定
         // ────────────────────────────
         mSwitchService.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if (buttonView.isPressed()) {
-                if (isChecked) {
-                    boolean ok = TermuxMcpManager.getInstance().startServer(this);
-                    if (!ok) {
-                        mSwitchService.setChecked(false);
-                        Toast.makeText(this, "服务启动失败，请检查端口是否被占用", Toast.LENGTH_SHORT).show();
-                    } else {
-                        Toast.makeText(this, "Termux+ MCP 服务已在后台启动！", Toast.LENGTH_SHORT).show();
-                    }
+            if (mIsUpdatingUi) return;
+            if (isChecked) {
+                boolean ok = TermuxMcpManager.getInstance().startServer(this);
+                if (!ok) {
+                    mSwitchService.setChecked(false);
+                    Toast.makeText(this, "服务启动失败，请检查端口是否被占用", Toast.LENGTH_SHORT).show();
                 } else {
-                    TermuxMcpManager.getInstance().stopServer(this);
-                    Toast.makeText(this, "Termux+ MCP 服务已停止", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Termux+ MCP 服务已在后台启动！", Toast.LENGTH_SHORT).show();
                 }
-                refreshUI();
+            } else {
+                TermuxMcpManager.getInstance().stopServer(this);
+                Toast.makeText(this, "Termux+ MCP 服务已停止", Toast.LENGTH_SHORT).show();
             }
+            refreshUI();
         });
 
         mSwitchAutoStart.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if (buttonView.isPressed()) {
-                TermuxMcpManager.getInstance().setAutoStartEnabled(this, isChecked);
-                Toast.makeText(this, isChecked ? "已启用开机与启动自启" : "已关闭启动自启", Toast.LENGTH_SHORT).show();
-            }
+            if (mIsUpdatingUi) return;
+            TermuxMcpManager.getInstance().setAutoStartEnabled(this, isChecked);
+            Toast.makeText(this, isChecked ? "已启用开机与启动自启" : "已关闭启动自启", Toast.LENGTH_SHORT).show();
         });
 
         mSwitchWakeLock.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if (buttonView.isPressed()) {
-                TermuxMcpManager.getInstance().setWakeLockEnabled(this, isChecked);
-                Toast.makeText(this, isChecked ? "已启用 CPU 唤醒保活 (WakeLock)" : "已关闭 CPU 唤醒保活", Toast.LENGTH_SHORT).show();
-            }
+            if (mIsUpdatingUi) return;
+            TermuxMcpManager.getInstance().setWakeLockEnabled(this, isChecked);
+            Toast.makeText(this, isChecked ? "已启用 CPU 唤醒保活 (WakeLock)" : "已关闭 CPU 唤醒保活", Toast.LENGTH_SHORT).show();
         });
 
         // 绑定 9 大工具独立开关
@@ -1040,26 +1038,25 @@ public class TermuxMcpActivity extends AppCompatActivity {
 
         // 绑定 OpenAI 官方原生安全隧道开关
         mSwitchOpenAiTunnel.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if (buttonView.isPressed()) {
-                OpenAiTunnelManager manager = OpenAiTunnelManager.getInstance();
-                manager.setEnabled(this, isChecked);
-                if (isChecked) {
-                    if (!TermuxMcpManager.getInstance().isServerRunning()) {
-                        TermuxMcpManager.getInstance().startServer(this);
-                    }
-                    boolean ok = manager.startTunnel(this);
-                    if (!ok) {
-                        mSwitchOpenAiTunnel.setChecked(false);
-                        Toast.makeText(this, "启动失败: " + manager.getLastError(), Toast.LENGTH_LONG).show();
-                    } else {
-                        Toast.makeText(this, "已启动 OpenAI 官方隧道，正在建立出站长连接...", Toast.LENGTH_SHORT).show();
-                    }
-                } else {
-                    manager.stopTunnel(this);
-                    Toast.makeText(this, "OpenAI 官方隧道已停止", Toast.LENGTH_SHORT).show();
+            if (mIsUpdatingUi) return;
+            OpenAiTunnelManager manager = OpenAiTunnelManager.getInstance();
+            manager.setEnabled(this, isChecked);
+            if (isChecked) {
+                if (!TermuxMcpManager.getInstance().isServerRunning()) {
+                    TermuxMcpManager.getInstance().startServer(this);
                 }
-                refreshUI();
+                boolean ok = manager.startTunnel(this);
+                if (!ok) {
+                    mSwitchOpenAiTunnel.setChecked(false);
+                    Toast.makeText(this, "启动失败: " + manager.getLastError(), Toast.LENGTH_LONG).show();
+                } else {
+                    Toast.makeText(this, "已启动 OpenAI 官方隧道，正在建立出站长连接...", Toast.LENGTH_SHORT).show();
+                }
+            } else {
+                manager.stopTunnel(this);
+                Toast.makeText(this, "OpenAI 官方隧道已停止", Toast.LENGTH_SHORT).show();
             }
+            refreshUI();
         });
 
         OpenAiTunnelManager.getInstance().setStateListener((state, lastError) -> {
@@ -1071,92 +1068,92 @@ public class TermuxMcpActivity extends AppCompatActivity {
 
     private void bindToolSwitch(SwitchMaterial switchView, String prefKey, String name) {
         switchView.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if (buttonView.isPressed()) {
-                TermuxMcpManager.getInstance().setToolEnabled(this, prefKey, isChecked);
-                Toast.makeText(this, (isChecked ? "已启用工具: " : "已关闭工具: ") + name, Toast.LENGTH_SHORT).show();
-            }
+            if (mIsUpdatingUi) return;
+            TermuxMcpManager.getInstance().setToolEnabled(this, prefKey, isChecked);
+            Toast.makeText(this, (isChecked ? "已启用工具: " : "已关闭工具: ") + name, Toast.LENGTH_SHORT).show();
         });
     }
 
     private void refreshUI() {
-        TermuxMcpManager manager = TermuxMcpManager.getInstance();
-        boolean running = manager.isServerRunning();
-        int port = manager.getPort(this);
-        String token = manager.getToken(this);
-        int timeoutSec = manager.getExecTimeoutSec(this);
-        String localIp = TermuxMcpManager.getLocalIpAddress();
-        String publicHost = manager.getPublicHost(this);
+        mIsUpdatingUi = true;
+        try {
+            TermuxMcpManager manager = TermuxMcpManager.getInstance();
+            boolean running = manager.isServerRunning();
+            int port = manager.getPort(this);
+            String token = manager.getToken(this);
+            int timeoutSec = manager.getExecTimeoutSec(this);
+            String localIp = TermuxMcpManager.getLocalIpAddress();
+            String publicHost = manager.getPublicHost(this);
 
-        mSwitchService.setChecked(running);
-        mSwitchAutoStart.setChecked(manager.isAutoStartEnabled(this));
-        mSwitchWakeLock.setChecked(manager.isWakeLockEnabled(this));
+            mSwitchService.setChecked(running);
+            mSwitchAutoStart.setChecked(manager.isAutoStartEnabled(this));
+            mSwitchWakeLock.setChecked(manager.isWakeLockEnabled(this));
 
-        // 公网穿透域名展示
-        if (publicHost != null && !publicHost.isEmpty()) {
-            mTvPublicHost.setText(publicHost);
-        } else {
-            mTvPublicHost.setText("未配置（当前使用局域网: http://" + localIp + ":" + port + "）");
-        }
+            // 公网穿透域名展示
+            if (publicHost != null && !publicHost.isEmpty()) {
+                mTvPublicHost.setText(publicHost);
+            } else {
+                mTvPublicHost.setText("未配置（当前使用局域网: http://" + localIp + ":" + port + "）");
+            }
 
-        String primaryEndpoint = (publicHost != null && !publicHost.isEmpty()) ? publicHost : ("http://" + localIp + ":" + port);
+            String primaryEndpoint = (publicHost != null && !publicHost.isEmpty()) ? publicHost : ("http://" + localIp + ":" + port);
 
-        if (running) {
-            mTvStatus.setText("🟢 状态：运行中（双模与 OAuth 2.1 监听 0.0.0.0:" + port + "）");
-            mTvStatus.setTextColor(0xFF2E7D32); // 绿色
-            mTvAddress.setVisibility(View.VISIBLE);
-            mTvAddress.setText("外部访问端点: " + primaryEndpoint + "/mcp\n" +
-                              "经典 SSE 端点: " + primaryEndpoint + "/sse\n" +
-                              "OAuth 发现: " + primaryEndpoint + "/.well-known/oauth-authorization-server");
-        } else {
-            mTvStatus.setText("⚪ 状态：未运行");
-            mTvStatus.setTextColor(mTextColorSecondary);
-            mTvAddress.setVisibility(View.GONE);
-        }
+            if (running) {
+                mTvStatus.setText("🟢 状态：运行中（双模与 OAuth 2.1 监听 0.0.0.0:" + port + "）");
+                mTvStatus.setTextColor(0xFF2E7D32); // 绿色
+                mTvAddress.setVisibility(View.VISIBLE);
+                mTvAddress.setText("外部访问端点: " + primaryEndpoint + "/mcp\n" +
+                                  "经典 SSE 端点: " + primaryEndpoint + "/sse\n" +
+                                  "OAuth 发现: " + primaryEndpoint + "/.well-known/oauth-authorization-server");
+            } else {
+                mTvStatus.setText("⚪ 状态：未运行");
+                mTvStatus.setTextColor(mTextColorSecondary);
+                mTvAddress.setVisibility(View.GONE);
+            }
 
-        mTvPort.setText("当前监听端口：" + port);
-        mTvToken.setText(token.isEmpty() ? "（未设置 · 免密模式）" : token);
-        mTvTimeout.setText("当前超时上限：" + timeoutSec + " 秒（超时后自动终止进程）");
+            mTvPort.setText("当前监听端口：" + port);
+            mTvToken.setText(token.isEmpty() ? "（未设置 · 免密模式）" : token);
+            mTvTimeout.setText("当前超时上限：" + timeoutSec + " 秒（超时后自动终止进程）");
 
-        mTvOAuthClientId.setText(manager.getOAuthClientId(this));
-        mTvOAuthClientSecret.setText(manager.getOAuthClientSecret(this));
-        mTvOAuthUrls.setText(
-            "授权端点: " + primaryEndpoint + "/oauth/authorize\n" +
-            "令牌端点: " + primaryEndpoint + "/oauth/token"
-        );
+            mTvOAuthClientId.setText(manager.getOAuthClientId(this));
+            mTvOAuthClientSecret.setText(manager.getOAuthClientSecret(this));
+            mTvOAuthUrls.setText(
+                "授权端点: " + primaryEndpoint + "/oauth/authorize\n" +
+                "令牌端点: " + primaryEndpoint + "/oauth/token"
+            );
 
-        // 同步 9 个独立工具开关状态
-        mSwitchToolExec.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_EXEC_CMD));
-        mSwitchToolFile.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_FILE_OPS));
-        mSwitchToolSys.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_SYSTEM_INFO));
-        mSwitchToolClip.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_CLIPBOARD));
-        mSwitchToolTorch.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_TORCH));
-        mSwitchToolTts.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_TTS));
-        mSwitchToolFeedback.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_FEEDBACK));
-        mSwitchToolUrl.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_OPEN_URL));
-        mSwitchToolDownload.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_DOWNLOAD));
+            // 同步 9 个独立工具开关状态
+            mSwitchToolExec.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_EXEC_CMD));
+            mSwitchToolFile.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_FILE_OPS));
+            mSwitchToolSys.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_SYSTEM_INFO));
+            mSwitchToolClip.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_CLIPBOARD));
+            mSwitchToolTorch.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_TORCH));
+            mSwitchToolTts.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_TTS));
+            mSwitchToolFeedback.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_FEEDBACK));
+            mSwitchToolUrl.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_OPEN_URL));
+            mSwitchToolDownload.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_DOWNLOAD));
 
-        // 同步 OpenAI 官方原生安全隧道状态
-        OpenAiTunnelManager openAiMgr = OpenAiTunnelManager.getInstance();
-        boolean openAiRunning = openAiMgr.isRunning();
-        mSwitchOpenAiTunnel.setChecked(openAiRunning);
+            // 同步 OpenAI 官方原生安全隧道状态
+            OpenAiTunnelManager openAiMgr = OpenAiTunnelManager.getInstance();
+            boolean openAiActive = openAiMgr.isConnectingOrRunning();
+            mSwitchOpenAiTunnel.setChecked(openAiActive);
 
-        OpenAiTunnelManager.TunnelState state = openAiMgr.getState();
-        if (openAiRunning) {
+            OpenAiTunnelManager.TunnelState state = openAiMgr.getState();
             if (state == OpenAiTunnelManager.TunnelState.CONNECTED) {
                 mTvOpenAiStatus.setText("🟢 状态：" + state.getDesc());
                 mTvOpenAiStatus.setTextColor(0xFF2E7D32);
-            } else {
+            } else if (state == OpenAiTunnelManager.TunnelState.STARTING || state == OpenAiTunnelManager.TunnelState.CONNECTING) {
                 mTvOpenAiStatus.setText("🟡 状态：" + state.getDesc());
                 mTvOpenAiStatus.setTextColor(0xFFF57F17);
-            }
-        } else {
-            if (state == OpenAiTunnelManager.TunnelState.ERROR) {
+            } else if (state == OpenAiTunnelManager.TunnelState.ERROR) {
                 mTvOpenAiStatus.setText("🔴 异常：" + openAiMgr.getLastError());
                 mTvOpenAiStatus.setTextColor(0xFFC62828);
             } else {
                 mTvOpenAiStatus.setText("⚪ 状态：未运行");
                 mTvOpenAiStatus.setTextColor(mTextColorSecondary);
             }
+        } finally {
+            mIsUpdatingUi = false;
         }
 
         String tid = openAiMgr.getTunnelId(this);
@@ -1512,6 +1509,7 @@ public class TermuxMcpActivity extends AppCompatActivity {
         row.addView(textCol);
         switchView.setText(""); // 消除内置文字，由左侧 TextView 统一排版与控色
         row.addView(switchView);
+        row.setOnClickListener(v -> switchView.toggle());
         return row;
     }
 

@@ -333,17 +333,15 @@ public class OpenAiTunnelManager {
         return null;
     }
 
+    public synchronized boolean isConnectingOrRunning() {
+        return mState == TunnelState.STARTING || mState == TunnelState.CONNECTING || mState == TunnelState.CONNECTED || isRunning();
+    }
+
     /**
      * 启动 OpenAI 官方 Secure Tunnel 进程
      */
     public synchronized boolean startTunnel(Context context) {
-        if (isRunning()) {
-            stopTunnel();
-        }
-
         mAppContext = context.getApplicationContext();
-        // 启动前强力清理所有残留的孤儿 tunnel-client 进程，杜绝 tunnel-id 冲突
-        killStaleTunnelProcesses(context);
 
         String tunnelId = getTunnelId(context);
         String apiKey = getApiKey(context);
@@ -358,131 +356,152 @@ public class OpenAiTunnelManager {
             return false;
         }
 
+        // 立即进入启动中状态，主线程绝不执行网络与重度 I/O 操作
         updateState(TunnelState.STARTING, null);
 
-        if (!ensureBinariesInstalled(context)) {
-            updateState(TunnelState.ERROR, "无法释放 tunnel-client 二进制可执行文件");
-            return false;
-        }
+        mThreadPool.execute(() -> {
+            try {
+                if (mProcess != null) {
+                    try {
+                        mProcess.destroy();
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            mProcess.destroyForcibly();
+                        }
+                    } catch (Exception ignored) {}
+                    mProcess = null;
+                }
 
-        File binFile = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH, "tunnel-client");
-        int targetPort = getTargetPort(context);
-        if (targetPort <= 0) {
-            targetPort = TermuxMcpManager.getInstance().getPort(context);
-        }
+                // 启动前强力清理所有残留的孤儿 tunnel-client 进程，杜绝 tunnel-id 冲突
+                killStaleTunnelProcesses(context);
 
-        List<String> cmd = new ArrayList<>();
-        cmd.add(binFile.getAbsolutePath());
-        cmd.add("run");
-        cmd.add("--control-plane.tunnel-id");
-        cmd.add(tunnelId);
-        // 标准直接 URL 格式，与成功命令完全一致
-        cmd.add("--mcp.server-url");
-        cmd.add("http://127.0.0.1:" + targetPort + "/mcp");
-        cmd.add("--health.listen-addr");
-        cmd.add("127.0.0.1:0"); // 自动分配随机空闲健康端口
+                if (!ensureBinariesInstalled(context)) {
+                    updateState(TunnelState.ERROR, "无法释放 tunnel-client 二进制可执行文件");
+                    return;
+                }
 
-        File pidFile = new File(context.getFilesDir(), "tunnel-client.pid");
-        cmd.add("--pid.file");
-        cmd.add(pidFile.getAbsolutePath());
+                File binFile = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH, "tunnel-client");
+                int targetPort = getTargetPort(context);
+                if (targetPort <= 0) {
+                    targetPort = TermuxMcpManager.getInstance().getPort(context);
+                }
 
-        // 自动带上对应的 Bearer 认证 Token (同时为常规请求与 discovery 探测注入)
-        String authToken = (targetPort == 3100) ? "bj1995112@." : TermuxMcpManager.getInstance().getToken(context);
-        if (authToken != null && !authToken.trim().isEmpty()) {
-            cmd.add("--mcp.extra-headers");
-            cmd.add("Authorization: Bearer " + authToken.trim());
-            cmd.add("--mcp.discovery-extra-headers");
-            cmd.add("Authorization: Bearer " + authToken.trim());
-        }
+                List<String> cmd = new ArrayList<>();
+                cmd.add(binFile.getAbsolutePath());
+                cmd.add("run");
+                cmd.add("--control-plane.tunnel-id");
+                cmd.add(tunnelId);
+                // 标准直接 URL 格式，与成功命令完全一致
+                cmd.add("--mcp.server-url");
+                cmd.add("http://127.0.0.1:" + targetPort + "/mcp");
+                cmd.add("--health.listen-addr");
+                cmd.add("127.0.0.1:0"); // 自动分配随机空闲健康端口
 
-        // 关键点 3：自动挂载 CA 根证书 Bundle
-        File caBundle = ensureCaBundle(context);
-        if (caBundle != null && caBundle.exists()) {
-            cmd.add("--ca-bundle");
-            cmd.add(caBundle.getAbsolutePath());
-        }
+                File pidFile = new File(context.getFilesDir(), "tunnel-client.pid");
+                cmd.add("--pid.file");
+                cmd.add(pidFile.getAbsolutePath());
 
-        // 关键点 4：智能识别代理
-        ProxyInfo effectiveProxy = null;
-        if (proxy != null && !proxy.trim().isEmpty()) {
-            String p = proxy.trim();
-            if (p.startsWith("socks5://") || p.startsWith("socks://")) {
-                String clean = p.replace("socks5://", "").replace("socks://", "");
-                String[] parts = clean.split(":");
-                int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 10808;
-                effectiveProxy = new ProxyInfo("socks5", parts[0], port, "用户指定 SOCKS5");
-            } else if (p.startsWith("http://") || p.startsWith("https://")) {
-                String clean = p.replace("http://", "").replace("https://", "");
-                String[] parts = clean.split(":");
-                int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 7890;
-                effectiveProxy = new ProxyInfo("http", parts[0], port, "用户指定 HTTP");
-            } else if (p.contains(":")) {
-                String[] parts = p.split(":");
-                int port = Integer.parseInt(parts[1]);
-                String scheme = (port == 10808 || port == 7891 || port == 1080) ? "socks5" : "http";
-                effectiveProxy = new ProxyInfo(scheme, parts[0], port, "用户指定代理");
+                // 自动带上对应的 Bearer 认证 Token (同时为常规请求与 discovery 探测注入)
+                String authToken = (targetPort == 3100) ? "bj1995112@." : TermuxMcpManager.getInstance().getToken(context);
+                if (authToken != null && !authToken.trim().isEmpty()) {
+                    cmd.add("--mcp.extra-headers");
+                    cmd.add("Authorization: Bearer " + authToken.trim());
+                    cmd.add("--mcp.discovery-extra-headers");
+                    cmd.add("Authorization: Bearer " + authToken.trim());
+                }
+
+                // 关键点 3：自动挂载 CA 根证书 Bundle
+                File caBundle = ensureCaBundle(context);
+                if (caBundle != null && caBundle.exists()) {
+                    cmd.add("--ca-bundle");
+                    cmd.add(caBundle.getAbsolutePath());
+                }
+
+                // 关键点 4：智能识别代理 (在后台线程执行端口探测，严防 NetworkOnMainThreadException)
+                ProxyInfo effectiveProxy = null;
+                if (proxy != null && !proxy.trim().isEmpty()) {
+                    String p = proxy.trim();
+                    if (p.startsWith("socks5://") || p.startsWith("socks://")) {
+                        String clean = p.replace("socks5://", "").replace("socks://", "");
+                        String[] parts = clean.split(":");
+                        int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 10808;
+                        effectiveProxy = new ProxyInfo("socks5", parts[0], port, "用户指定 SOCKS5");
+                    } else if (p.startsWith("http://") || p.startsWith("https://")) {
+                        String clean = p.replace("http://", "").replace("https://", "");
+                        String[] parts = clean.split(":");
+                        int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 7890;
+                        effectiveProxy = new ProxyInfo("http", parts[0], port, "用户指定 HTTP");
+                    } else if (p.contains(":")) {
+                        String[] parts = p.split(":");
+                        int port = Integer.parseInt(parts[1]);
+                        String scheme = (port == 10808 || port == 7891 || port == 1080) ? "socks5" : "http";
+                        effectiveProxy = new ProxyInfo(scheme, parts[0], port, "用户指定代理");
+                    }
+                } else {
+                    // 用户留空，后台智能嗅探
+                    try {
+                        effectiveProxy = detectLocalProxy();
+                    } catch (Exception e) {
+                        Logger.logError(LOG_TAG, "Proxy detection error: " + e.getMessage());
+                    }
+                }
+
+                if (effectiveProxy != null && "http".equalsIgnoreCase(effectiveProxy.scheme)) {
+                    cmd.add("--http-proxy");
+                    cmd.add(effectiveProxy.getUrl());
+                }
+
+                ProcessBuilder pb = new ProcessBuilder(cmd);
+                pb.directory(new File(TermuxConstants.TERMUX_HOME_DIR_PATH));
+
+                Map<String, String> env = pb.environment();
+                env.put("CONTROL_PLANE_API_KEY", apiKey);
+                env.put("OPENAI_API_KEY", apiKey);
+                env.put("PREFIX", TermuxConstants.TERMUX_PREFIX_DIR_PATH);
+                env.put("HOME", TermuxConstants.TERMUX_HOME_DIR_PATH);
+                env.put("PATH", TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":" + System.getenv("PATH"));
+                env.put("TMPDIR", TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH);
+
+                // 注入证书环境变量
+                if (caBundle != null && caBundle.exists()) {
+                    env.put("SSL_CERT_FILE", caBundle.getAbsolutePath());
+                    env.put("SSL_CERT_DIR", caBundle.getParentFile().getAbsolutePath());
+                    env.put("CA_BUNDLE", caBundle.getAbsolutePath());
+                }
+
+                // 注入代理环境变量 (ALL_PROXY 完美通吃 SOCKS5/HTTP 并且使 Go 代理远端 DNS)
+                if (effectiveProxy != null) {
+                    String url = effectiveProxy.getUrl();
+                    env.put("ALL_PROXY", url);
+                    env.put("all_proxy", url);
+                    env.put("HTTPS_PROXY", url);
+                    env.put("HTTP_PROXY", url);
+                    env.put("https_proxy", url);
+                    env.put("http_proxy", url);
+                }
+
+                mLogBuffer.clear();
+                appendLog("[Termux+] 🚀 正在启动 OpenAI 官方原生安全隧道...");
+                appendLog("[Termux+] 🎯 转发目标 MCP: http://127.0.0.1:" + targetPort + "/mcp");
+                if (caBundle != null && caBundle.exists()) {
+                    appendLog("[Termux+] 🔐 已挂载 CA 根证书: " + caBundle.getName() + " (" + (caBundle.length() / 1024) + " KB)");
+                }
+                if (effectiveProxy != null) {
+                    appendLog("[Termux+] 🌐 " + (proxy == null || proxy.trim().isEmpty() ? "智能嗅探到本地代理" : "使用指定代理") + ": " + effectiveProxy.toString());
+                } else {
+                    appendLog("[Termux+] 🌐 未检测到本地代理端口，尝试直接网络连接");
+                }
+
+                mProcess = pb.start();
+                updateState(TunnelState.CONNECTING, null);
+                startLogReader(mProcess.getInputStream());
+                startLogReader(mProcess.getErrorStream());
+            } catch (Exception e) {
+                updateState(TunnelState.ERROR, "启动失败: " + e.getMessage());
+                Logger.logError(LOG_TAG, "Failed to start tunnel-client: " + e.getMessage());
             }
-        } else {
-            // 用户留空，自动智能嗅探
-            effectiveProxy = detectLocalProxy();
-        }
+        });
 
-        if (effectiveProxy != null && "http".equalsIgnoreCase(effectiveProxy.scheme)) {
-            cmd.add("--http-proxy");
-            cmd.add(effectiveProxy.getUrl());
-        }
-
-        ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.directory(new File(TermuxConstants.TERMUX_HOME_DIR_PATH));
-
-        Map<String, String> env = pb.environment();
-        env.put("CONTROL_PLANE_API_KEY", apiKey);
-        env.put("PREFIX", TermuxConstants.TERMUX_PREFIX_DIR_PATH);
-        env.put("HOME", TermuxConstants.TERMUX_HOME_DIR_PATH);
-        env.put("PATH", TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":" + System.getenv("PATH"));
-        env.put("TMPDIR", TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH);
-
-        // 注入证书环境变量
-        if (caBundle != null && caBundle.exists()) {
-            env.put("SSL_CERT_FILE", caBundle.getAbsolutePath());
-            env.put("SSL_CERT_DIR", caBundle.getParentFile().getAbsolutePath());
-            env.put("CA_BUNDLE", caBundle.getAbsolutePath());
-        }
-
-        // 注入代理环境变量 (ALL_PROXY 完美通吃 SOCKS5/HTTP 并且使 Go 代理远端 DNS)
-        if (effectiveProxy != null) {
-            String url = effectiveProxy.getUrl();
-            env.put("ALL_PROXY", url);
-            env.put("all_proxy", url);
-            env.put("HTTPS_PROXY", url);
-            env.put("HTTP_PROXY", url);
-            env.put("https_proxy", url);
-            env.put("http_proxy", url);
-        }
-
-        mLogBuffer.clear();
-        appendLog("[Termux+] 🚀 正在启动 OpenAI 官方原生安全隧道...");
-        appendLog("[Termux+] 🎯 转发目标 MCP: http://127.0.0.1:" + targetPort + "/mcp");
-        if (caBundle != null && caBundle.exists()) {
-            appendLog("[Termux+] 🔐 已挂载 CA 根证书: " + caBundle.getName() + " (" + (caBundle.length() / 1024) + " KB)");
-        }
-        if (effectiveProxy != null) {
-            appendLog("[Termux+] 🌐 " + (proxy == null || proxy.trim().isEmpty() ? "智能嗅探到本地代理" : "使用指定代理") + ": " + effectiveProxy.toString());
-        } else {
-            appendLog("[Termux+] 🌐 未检测到本地代理端口，尝试直接网络连接");
-        }
-
-        try {
-            mProcess = pb.start();
-            updateState(TunnelState.CONNECTING, null);
-            startLogReader(mProcess.getInputStream());
-            startLogReader(mProcess.getErrorStream());
-            return true;
-        } catch (Exception e) {
-            updateState(TunnelState.ERROR, "启动进程失败: " + e.getMessage());
-            Logger.logError(LOG_TAG, "Failed to start tunnel-client: " + e.getMessage());
-            return false;
-        }
+        return true;
     }
 
     private void startLogReader(InputStream is) {
@@ -549,17 +568,21 @@ public class OpenAiTunnelManager {
         if (context != null) {
             mAppContext = context.getApplicationContext();
         }
-        if (mProcess != null) {
-            try {
-                mProcess.destroy();
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    mProcess.destroyForcibly();
-                }
-            } catch (Exception ignored) {}
-            mProcess = null;
-        }
-        killStaleTunnelProcesses(context != null ? context : mAppContext);
         updateState(TunnelState.STOPPED, null);
+        final Process procToKill = mProcess;
+        mProcess = null;
+        final Context targetContext = context != null ? context : mAppContext;
+        mThreadPool.execute(() -> {
+            if (procToKill != null) {
+                try {
+                    procToKill.destroy();
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        procToKill.destroyForcibly();
+                    }
+                } catch (Exception ignored) {}
+            }
+            killStaleTunnelProcesses(targetContext);
+        });
     }
 
     private void killStaleTunnelProcesses(Context context) {
