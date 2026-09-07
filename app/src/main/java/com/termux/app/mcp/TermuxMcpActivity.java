@@ -1152,30 +1152,30 @@ public class TermuxMcpActivity extends AppCompatActivity {
                 mTvOpenAiStatus.setText("⚪ 状态：未运行");
                 mTvOpenAiStatus.setTextColor(mTextColorSecondary);
             }
+
+            String tid = openAiMgr.getTunnelId(this);
+            mTvOpenAiTunnelId.setText(tid.isEmpty() ? "（未配置 · 点击下方按钮配置）" : tid);
+
+            String apiKey = openAiMgr.getApiKey(this);
+            if (apiKey.isEmpty()) {
+                mTvOpenAiApiKey.setText("（未配置 · 点击下方按钮配置）");
+            } else {
+                mTvOpenAiApiKey.setText(apiKey.length() > 8 ? (apiKey.substring(0, 4) + "••••••••" + apiKey.substring(apiKey.length() - 4)) : "••••••••");
+            }
+
+            int targetPort = openAiMgr.getTargetPort(this);
+            int defaultPort = TermuxMcpManager.getInstance().getPort(this);
+            if (targetPort <= 0 || targetPort == defaultPort) {
+                mTvOpenAiTargetPort.setText(defaultPort + " (默认 · Termux+ 内置原生服务)");
+            } else {
+                mTvOpenAiTargetPort.setText(targetPort + " (自定义外部服务)");
+            }
+
+            String proxy = openAiMgr.getProxy(this);
+            mTvOpenAiProxy.setText(proxy.isEmpty() ? "（全自动智能嗅探模式 · 自动对接 v2rayNG / Clash，无需配置）" : proxy);
         } finally {
             mIsUpdatingUi = false;
         }
-
-        String tid = openAiMgr.getTunnelId(this);
-        mTvOpenAiTunnelId.setText(tid.isEmpty() ? "（未配置 · 点击下方按钮配置）" : tid);
-
-        String apiKey = openAiMgr.getApiKey(this);
-        if (apiKey.isEmpty()) {
-            mTvOpenAiApiKey.setText("（未配置 · 点击下方按钮配置）");
-        } else {
-            mTvOpenAiApiKey.setText(apiKey.length() > 8 ? (apiKey.substring(0, 4) + "••••••••" + apiKey.substring(apiKey.length() - 4)) : "••••••••");
-        }
-
-        int targetPort = openAiMgr.getTargetPort(this);
-        int defaultPort = TermuxMcpManager.getInstance().getPort(this);
-        if (targetPort <= 0 || targetPort == defaultPort) {
-            mTvOpenAiTargetPort.setText(defaultPort + " (默认 · Termux+ 内置原生服务)");
-        } else {
-            mTvOpenAiTargetPort.setText(targetPort + " (自定义外部服务)");
-        }
-
-        String proxy = openAiMgr.getProxy(this);
-        mTvOpenAiProxy.setText(proxy.isEmpty() ? "（全自动智能嗅探模式 · 自动对接 v2rayNG / Clash，无需配置）" : proxy);
     }
 
     private void showEditPublicHostDialog() {
