@@ -12,6 +12,7 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -1334,28 +1335,73 @@ public class TermuxMcpActivity extends AppCompatActivity {
     }
 
     private void showTunnelLogsDialog() {
-        String logs = OpenAiTunnelManager.getInstance().getRecentLogs();
+        LinearLayout rootLayout = new LinearLayout(this);
+        rootLayout.setOrientation(LinearLayout.VERTICAL);
+
+        // 顶部操作工具栏：[📋 复制]  [🗑️ 清空]  [🔄 刷新]
+        LinearLayout toolBar = new LinearLayout(this);
+        toolBar.setOrientation(LinearLayout.HORIZONTAL);
+        toolBar.setPadding(20, 10, 20, 10);
+        toolBar.setGravity(Gravity.END);
+
+        Button btnCopy = new Button(this, null, android.R.attr.borderlessButtonStyle);
+        btnCopy.setText("📋 复制");
+        btnCopy.setTextSize(13);
+
+        Button btnClear = new Button(this, null, android.R.attr.borderlessButtonStyle);
+        btnClear.setText("🗑️ 清空");
+        btnClear.setTextSize(13);
+
+        Button btnRefresh = new Button(this, null, android.R.attr.borderlessButtonStyle);
+        btnRefresh.setText("🔄 刷新");
+        btnRefresh.setTextSize(13);
+
+        toolBar.addView(btnCopy);
+        toolBar.addView(btnClear);
+        toolBar.addView(btnRefresh);
+        rootLayout.addView(toolBar);
+
+        // 日志展示区域
         TextView tv = new TextView(this);
-        tv.setText(logs);
+        tv.setText(OpenAiTunnelManager.getInstance().getRecentLogs());
         tv.setTextSize(11);
         tv.setTypeface(Typeface.MONOSPACE);
-        tv.setPadding(30, 20, 30, 20);
+        tv.setPadding(30, 10, 30, 20);
 
         ScrollView sv = new ScrollView(this);
         sv.addView(tv);
+        LinearLayout.LayoutParams svParams = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f);
+        rootLayout.addView(sv, svParams);
+
+        // 自动滑动至最新底部
+        sv.post(() -> sv.fullScroll(View.FOCUS_DOWN));
+
+        btnCopy.setOnClickListener(v -> {
+            String currentLogs = tv.getText().toString();
+            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null) {
+                cm.setPrimaryClip(ClipData.newPlainText("Tunnel Logs", currentLogs));
+                Toast.makeText(this, "隧道日志已成功复制到系统剪贴板！", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        btnClear.setOnClickListener(v -> {
+            OpenAiTunnelManager.getInstance().clearLogs();
+            tv.setText("暂无隧道运行日志（已清空）");
+            Toast.makeText(this, "隧道日志已清空！", Toast.LENGTH_SHORT).show();
+        });
+
+        btnRefresh.setOnClickListener(v -> {
+            tv.setText(OpenAiTunnelManager.getInstance().getRecentLogs());
+            sv.post(() -> sv.fullScroll(View.FOCUS_DOWN));
+            Toast.makeText(this, "日志已刷新", Toast.LENGTH_SHORT).show();
+        });
 
         new AlertDialog.Builder(this)
             .setTitle("OpenAI 隧道实时运行日志")
-            .setView(sv)
-            .setPositiveButton("复制日志", (dialog, which) -> {
-                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                if (cm != null) {
-                    cm.setPrimaryClip(ClipData.newPlainText("Tunnel Logs", logs));
-                    Toast.makeText(this, "隧道日志已成功复制到系统剪贴板！", Toast.LENGTH_SHORT).show();
-                }
-            })
-            .setNeutralButton("刷新", (dialog, which) -> showTunnelLogsDialog())
-            .setNegativeButton("关闭", null)
+            .setView(rootLayout)
+            .setPositiveButton("关闭", null)
             .show();
     }
 

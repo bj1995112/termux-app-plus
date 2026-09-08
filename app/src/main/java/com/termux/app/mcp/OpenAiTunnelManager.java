@@ -1007,6 +1007,21 @@ public class OpenAiTunnelManager {
     }
 
     /**
+     * 清空内存与磁盘中的隧道运行日志
+     */
+    public synchronized void clearLogs() {
+        mLogBuffer.clear();
+        try {
+            File logFile = new File(TermuxConstants.TERMUX_HOME_DIR_PATH, "tunnel.log");
+            if (logFile.exists()) {
+                try (FileOutputStream fos = new FileOutputStream(logFile)) {
+                    // 清空文件内容
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    /**
      * 停止 OpenAI 官方 Secure Tunnel 进程
      */
     public synchronized void stopTunnel() {

@@ -231,4 +231,18 @@ public class OpenAiTunnelManagerTest {
         inspectMethod.invoke(manager, "poll failed; backing off for 2.5s: 401 Unauthorized");
         Assert.assertEquals(OpenAiTunnelManager.TunnelState.ERROR, manager.getState());
     }
+
+    @Test
+    public void testClearLogs() throws Exception {
+        OpenAiTunnelManager manager = OpenAiTunnelManager.getInstance();
+        Method appendMethod = OpenAiTunnelManager.class.getDeclaredMethod("appendLog", String.class);
+        appendMethod.setAccessible(true);
+
+        appendMethod.invoke(manager, "log line 1");
+        appendMethod.invoke(manager, "log line 2");
+        Assert.assertTrue(manager.getRecentLogs().contains("log line 1"));
+
+        manager.clearLogs();
+        Assert.assertEquals("暂无隧道运行日志", manager.getRecentLogs());
+    }
 }
