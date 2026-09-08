@@ -502,7 +502,6 @@ public class OpenAiTunnelManager {
         2080,  // sing-box HTTP/Mixed
         8888,  // Fiddler / Charles / 自定义 HTTP
         8889,  // 自定义 HTTP
-        9090,  // 自定义 HTTP
         1082,  // 常见 HTTP 端口
         8080,  // 标准 HTTP 代理
         8118,  // Privoxy
@@ -528,21 +527,23 @@ public class OpenAiTunnelManager {
 
     /**
      * 对指定端口进行主动协议探测，判断其是 HTTP 还是 SOCKS5
+     * 严防将普通 Web/API 服务的 405 Method Not Allowed 或 404 误判为 HTTP 代理
      */
     public static ProxyInfo probeProxyPort(String host, int port) {
-        // 1. 优先尝试 HTTP CONNECT 探针
+        // 1. 优先尝试 HTTP CONNECT 探针（标准 HTTP 代理支持 CONNECT 隧道方法）
         try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(host, port), 120);
-            socket.setSoTimeout(120);
+            socket.connect(new InetSocketAddress(host, port), 150);
+            socket.setSoTimeout(150);
             OutputStream os = socket.getOutputStream();
             InputStream is = socket.getInputStream();
-            os.write("CONNECT cp.cloudflare.com:443 HTTP/1.1\r\nHost: cp.cloudflare.com:443\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+            os.write("CONNECT 1.1.1.1:443 HTTP/1.1\r\nHost: 1.1.1.1:443\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
             os.flush();
-            byte[] buf = new byte[7];
+            byte[] buf = new byte[128];
             int n = is.read(buf);
-            if (n >= 5) {
-                String resp = new String(buf, 0, n, StandardCharsets.US_ASCII);
-                if (resp.startsWith("HTTP/")) {
+            if (n >= 12) {
+                String resp = new String(buf, 0, n, StandardCharsets.US_ASCII).toUpperCase();
+                // 必须是 200 Connection Established 或 407 Proxy Authentication Required，严禁将 405/404 等 Web 接口错误误判为代理
+                if (resp.contains(" 200 ") || resp.contains(" 407 ") || resp.contains("CONNECTION ESTABLISHED")) {
                     return new ProxyInfo("http", host, port, "本地 HTTP 代理");
                 }
             }
@@ -550,8 +551,8 @@ public class OpenAiTunnelManager {
 
         // 2. 尝试 SOCKS5 探针（发送 0x05 0x01 0x00 握手）
         try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(host, port), 120);
-            socket.setSoTimeout(120);
+            socket.connect(new InetSocketAddress(host, port), 150);
+            socket.setSoTimeout(150);
             OutputStream os = socket.getOutputStream();
             InputStream is = socket.getInputStream();
             os.write(new byte[]{0x05, 0x01, 0x00});
@@ -560,24 +561,6 @@ public class OpenAiTunnelManager {
             int n = is.read(buf);
             if (n == 2 && buf[0] == 0x05 && buf[1] == 0x00) {
                 return new ProxyInfo("socks5", host, port, "本地 SOCKS5 代理");
-            }
-        } catch (Exception ignored) {}
-
-        // 3. 备用 HTTP GET 探针（部分代理不响应未经鉴权的 CONNECT，但响应 GET）
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(host, port), 120);
-            socket.setSoTimeout(120);
-            OutputStream os = socket.getOutputStream();
-            InputStream is = socket.getInputStream();
-            os.write("GET http://cp.cloudflare.com/generate_204 HTTP/1.1\r\nHost: cp.cloudflare.com\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
-            os.flush();
-            byte[] buf = new byte[7];
-            int n = is.read(buf);
-            if (n >= 5) {
-                String resp = new String(buf, 0, n, StandardCharsets.US_ASCII);
-                if (resp.startsWith("HTTP/")) {
-                    return new ProxyInfo("http", host, port, "本地 HTTP 代理");
-                }
             }
         } catch (Exception ignored) {}
 

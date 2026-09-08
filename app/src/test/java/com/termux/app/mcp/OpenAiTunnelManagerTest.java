@@ -94,7 +94,32 @@ public class OpenAiTunnelManagerTest {
         Assert.assertEquals(socksPort, probedSocks.port);
         socksMockServer.close();
 
-        // 3. 探测未监听端口
+        // 3. 模拟返回 405 Method Not Allowed 的 Web 控制面板（严防误判为代理）
+        ServerSocket web405Server = new ServerSocket(0);
+        int web405Port = web405Server.getLocalPort();
+        Thread web405Thread = new Thread(() -> {
+            try {
+                while (!web405Server.isClosed()) {
+                    Socket s = web405Server.accept();
+                    InputStream in = s.getInputStream();
+                    OutputStream out = s.getOutputStream();
+                    byte[] buf = new byte[1024];
+                    int n = in.read(buf);
+                    if (n > 0) {
+                        out.write("HTTP/1.1 405 Method Not Allowed\r\nAllow: GET\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+                        out.flush();
+                    }
+                    s.close();
+                }
+            } catch (Exception ignored) {}
+        });
+        web405Thread.start();
+
+        OpenAiTunnelManager.ProxyInfo probed405 = OpenAiTunnelManager.probeProxyPort("127.0.0.1", web405Port);
+        Assert.assertNull("Web server returning 405 should NOT be recognized as proxy", probed405);
+        web405Server.close();
+
+        // 4. 探测未监听端口
         OpenAiTunnelManager.ProxyInfo probedNone = OpenAiTunnelManager.probeProxyPort("127.0.0.1", 59999);
         Assert.assertNull(probedNone);
     }
