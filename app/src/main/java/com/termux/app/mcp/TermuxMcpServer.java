@@ -963,8 +963,9 @@ public class TermuxMcpServer {
      */
     private void handleMcpPost(String body, OutputStream out, Map<String, String> headers, Map<String, String> queryParams, String path, boolean keepAlive, String clientIp) throws IOException {
         if (body == null || body.trim().isEmpty()) {
-            TermuxMcpManager.getInstance().log("ERROR", "[" + clientIp + "] [MCP ERROR] 请求体为空 (Empty body)");
-            sendJsonResponse(out, 400, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32700,\"message\":\"Parse error: Empty body\"}}", null, keepAlive);
+            // Keep-Alive 管道或客户端探测性空 POST，平滑响应 200，杜绝 [ERROR] 日志干扰
+            TermuxMcpManager.getInstance().log("INFO", "[" + clientIp + "] [MCP] 收到空请求体试探请求，静默应答 200");
+            sendEmptyResponse(out, 200, null, keepAlive);
             return;
         }
 
@@ -1008,6 +1009,7 @@ public class TermuxMcpServer {
             }
             mSessions.put(sessionId, new McpSession(sessionId));
             TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] " + method + " session bound: " + sessionId);
+            TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] session created: " + sessionId);
         } else if (!isLegacyEndpoint) {
             // 标准 /mcp 端点检验会话凭据
             if (sessionId == null || sessionId.isEmpty()) {
@@ -1020,6 +1022,7 @@ public class TermuxMcpServer {
                     sessionId = UUID.randomUUID().toString();
                     mSessions.put(sessionId, new McpSession(sessionId));
                     TermuxMcpManager.getInstance().log("INFO", "[" + clientIp + "] 无状态 MCP 请求，自动分配自适应会话: " + sessionId);
+                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] session created: " + sessionId);
                 }
             }
             McpSession session = mSessions.get(sessionId);
@@ -1027,6 +1030,7 @@ public class TermuxMcpServer {
                 // 会话已过期或外部未知 session_id：直接激活，杜绝 404
                 session = new McpSession(sessionId);
                 mSessions.put(sessionId, session);
+                TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] session created: " + sessionId);
             }
             session.lastActiveAt = System.currentTimeMillis();
         } else {
@@ -1041,17 +1045,18 @@ public class TermuxMcpServer {
             } else {
                 sessionId = UUID.randomUUID().toString();
                 mSessions.put(sessionId, new McpSession(sessionId));
+                TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] session created: " + sessionId);
             }
         }
 
         // 3. Notification 请求处理（如 notifications/initialized）
         if (isNotification) {
             if ("notifications/initialized".equals(method)) {
-                TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] initialized notification received (sessionId=" + sessionId + ")");
+                TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] initialized notification received");
             } else {
                 TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] notification received: " + method + " (sessionId=" + sessionId + ")");
             }
-            // 返回 HTTP 200 OK，携带 Mcp-Session-Id 与 Content-Length: 0
+            // 返回 HTTP 200 OK，携带 Mcp-Session-Id 与 Content-Length: 0，保留 Session
             sendEmptyResponse(out, 200, sessionId, keepAlive);
             return;
         }
@@ -1116,11 +1121,9 @@ public class TermuxMcpServer {
                     // 兼容旧版客户端可能检查的 protocolVersion 单值
                     discResult.put("protocolVersion", protocolVersion);
 
-                    // 2. Capabilities 能力声明
+                    // 2. Capabilities 能力声明（使用静态工具空对象能力声明 tools: {}，杜绝 listChanged 误导客户端）
                     JSONObject capabilities = new JSONObject();
-                    JSONObject toolsCap = new JSONObject();
-                    toolsCap.put("listChanged", true);
-                    capabilities.put("tools", toolsCap);
+                    capabilities.put("tools", new JSONObject());
                     capabilities.put("resources", new JSONObject());
                     capabilities.put("prompts", new JSONObject());
                     discResult.put("capabilities", capabilities);
@@ -1159,10 +1162,9 @@ public class TermuxMcpServer {
                     initSupportedVersions.put("2024-11-05");
                     initResult.put("supportedVersions", initSupportedVersions);
 
+                    // 规范 tools 能力声明 tools: {}
                     JSONObject capabilities = new JSONObject();
-                    JSONObject toolsCap = new JSONObject();
-                    toolsCap.put("listChanged", true);
-                    capabilities.put("tools", toolsCap);
+                    capabilities.put("tools", new JSONObject());
                     initResult.put("capabilities", capabilities);
 
                     JSONObject serverInfo = new JSONObject();
@@ -1191,9 +1193,21 @@ public class TermuxMcpServer {
                     TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] tools/list received");
                     JSONObject listResult = new JSONObject();
                     JSONArray toolsArray = ToolRegistry.getInstance().getMcpToolsDefinition(mContext);
+                    // 保底机制：若尚未加载工具或用户全部关闭，提供基础 ping 测试工具
+                    if (toolsArray == null || toolsArray.length() == 0) {
+                        toolsArray = new JSONArray();
+                        JSONObject pingTool = new JSONObject();
+                        pingTool.put("name", "ping");
+                        pingTool.put("description", "test tool");
+                        JSONObject schema = new JSONObject();
+                        schema.put("type", "object");
+                        pingTool.put("inputSchema", schema);
+                        toolsArray.put(pingTool);
+                    }
                     listResult.put("tools", toolsArray);
                     resp.put("result", listResult);
                     TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] tools/list response sent (toolsCount=" + toolsArray.length() + ")");
+                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] tools/list response sent");
                     break;
 
                 case "tools/call":
@@ -1202,18 +1216,24 @@ public class TermuxMcpServer {
                     JSONObject arguments = params != null ? params.optJSONObject("arguments") : new JSONObject();
                     if (arguments == null) arguments = new JSONObject();
 
-                    String argsStr = arguments.toString();
-                    if (argsStr.length() > 80) {
-                        argsStr = argsStr.substring(0, 80) + "...";
-                    }
-                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] tools/call received (tool=" + toolName + ") args: " + argsStr);
+                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] tools/call received (tool=" + toolName + ")");
 
-                    long startTool = System.currentTimeMillis();
-                    JSONObject callResult = ToolRegistry.getInstance().executeTool(toolName, arguments, mContext);
-                    long cost = System.currentTimeMillis() - startTool;
+                    JSONObject callResult;
+                    if ("ping".equals(toolName)) {
+                        callResult = new JSONObject();
+                        JSONArray content = new JSONArray();
+                        JSONObject textObj = new JSONObject();
+                        textObj.put("type", "text");
+                        textObj.put("text", "pong");
+                        content.put(textObj);
+                        callResult.put("content", content);
+                        callResult.put("isError", false);
+                    } else {
+                        callResult = ToolRegistry.getInstance().executeTool(toolName, arguments, mContext);
+                    }
 
                     boolean isErr = callResult.optBoolean("isError", false);
-                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] tools/call response sent (tool=" + toolName + ", cost=" + cost + "ms, isError=" + isErr + ")");
+                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] tools/call response sent (tool=" + toolName + ", isError=" + isErr + ")");
 
                     resp.put("result", callResult);
                     break;
@@ -1340,9 +1360,14 @@ public class TermuxMcpServer {
      */
     private void handleMcpDelete(OutputStream out, Map<String, String> headers, Map<String, String> queryParams, boolean keepAlive) throws IOException {
         String sessionId = extractSessionId(headers, queryParams, null);
+        // 关键防护：DELETE 不立即从 mSessions 中注销会话，只关闭活跃的 SSE 长连接流
+        // 确保同一个 mcp-session-id 在健康探测或会话释放后仍可继续接收后续请求
         if (sessionId != null && !sessionId.isEmpty()) {
-            mSessions.remove(sessionId);
             mSseSessions.remove(sessionId);
+            McpSession s = mSessions.get(sessionId);
+            if (s != null) {
+                s.lastActiveAt = System.currentTimeMillis();
+            }
         }
         sendEmptyResponse(out, 204, sessionId, keepAlive);
     }
