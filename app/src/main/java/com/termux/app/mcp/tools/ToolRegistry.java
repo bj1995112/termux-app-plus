@@ -76,6 +76,24 @@ public class ToolRegistry {
         // 6. 网络与下载
         registerTool(new NetworkTools.OpenUrlTool());
         registerTool(new NetworkTools.DownloadFileTool());
+
+        // 7. Python 代码与脚本执行
+        registerTool(new PythonTool());
+
+        // 8. Git 版本管理
+        registerTool(new GitTools.GitStatusTool());
+        registerTool(new GitTools.GitPullTool());
+        registerTool(new GitTools.GitCloneTool());
+        registerTool(new GitTools.GitLogTool());
+        registerTool(new GitTools.GitDiffTool());
+
+        // 9. PM2 进程守护管理
+        registerTool(new Pm2Tools.Pm2ListTool());
+        registerTool(new Pm2Tools.Pm2StartTool());
+        registerTool(new Pm2Tools.Pm2StopTool());
+        registerTool(new Pm2Tools.Pm2RestartTool());
+        registerTool(new Pm2Tools.Pm2LogsTool());
+        registerTool(new Pm2Tools.Pm2SaveTool());
     }
 
     public synchronized void registerTool(McpTool tool) {
@@ -177,6 +195,16 @@ public class ToolRegistry {
                 textOutput = "执行异常: " + (e.getMessage() != null ? e.getMessage() : e.toString());
             }
         }
+
+        // 统一输出结构化日志: [时间] [TOOL] 工具名称 参数 执行结果
+        try {
+            String argsStr = (args != null) ? args.toString() : "{}";
+            String resultSummary = textOutput;
+            if (resultSummary != null && resultSummary.length() > 300) {
+                resultSummary = resultSummary.substring(0, 300) + "...";
+            }
+            TermuxMcpManager.getInstance().log("TOOL", toolName + " " + argsStr + " " + (isError ? "[ERROR] " : "[OK] ") + resultSummary);
+        } catch (Exception ignored) {}
 
         try {
             JSONObject textObj = new JSONObject();

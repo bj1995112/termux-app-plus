@@ -55,6 +55,9 @@ public class TermuxMcpManager {
     public static final String PREF_KEY_TOOL_FEEDBACK = "mcp_tool_feedback";
     public static final String PREF_KEY_TOOL_OPEN_URL = "mcp_tool_open_url";
     public static final String PREF_KEY_TOOL_DOWNLOAD = "mcp_tool_download";
+    public static final String PREF_KEY_TOOL_PYTHON = "mcp_tool_python";
+    public static final String PREF_KEY_TOOL_GIT = "mcp_tool_git";
+    public static final String PREF_KEY_TOOL_PM2 = "mcp_tool_pm2";
 
     public static final int DEFAULT_PORT = 28488;
     public static final int DEFAULT_EXEC_TIMEOUT_SEC = 60;

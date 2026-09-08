@@ -91,9 +91,42 @@ public class ShellTool implements McpTool {
         return runShellCommand(command, cwdStr, timeout);
     }
 
-    public String runShellCommand(String command, String cwdStr, int timeoutMs) {
+    public static class CommandResult {
+        public final boolean success;
+        public final String stdout;
+        public final String stderr;
+        public final int exitCode;
+        public final long durationMs;
+
+        public CommandResult(boolean success, String stdout, String stderr, int exitCode, long durationMs) {
+            this.success = success;
+            this.stdout = stdout != null ? stdout : "";
+            this.stderr = stderr != null ? stderr : "";
+            this.exitCode = exitCode;
+            this.durationMs = durationMs;
+        }
+
+        public JSONObject toJsonObject() {
+            JSONObject json = new JSONObject();
+            try {
+                json.put("success", success);
+                json.put("stdout", stdout);
+                json.put("stderr", stderr);
+                json.put("exit_code", exitCode);
+                json.put("duration", String.format(java.util.Locale.US, "%.3fs", durationMs / 1000.0));
+            } catch (Exception ignored) {}
+            return json;
+        }
+
+        public String toJsonString() {
+            return toJsonObject().toString();
+        }
+    }
+
+    public static CommandResult run(String command, String cwdStr, int timeoutMs) {
+        long startTime = System.currentTimeMillis();
         if (command == null || command.trim().isEmpty()) {
-            return "错误：命令行不能为空";
+            return new CommandResult(false, "", "错误：命令行不能为空", -1, 0);
         }
 
         File cwd = new File(cwdStr != null && !cwdStr.isEmpty() ? cwdStr : TermuxConstants.TERMUX_HOME_DIR_PATH);
@@ -138,9 +171,10 @@ public class ShellTool implements McpTool {
             tErr.start();
 
             boolean finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS);
+            long durationMs = System.currentTimeMillis() - startTime;
             if (!finished) {
                 process.destroyForcibly();
-                return "执行超时（限制: " + timeoutMs + "ms）";
+                return new CommandResult(false, "", "执行超时（限制: " + timeoutMs + "ms）", -1, durationMs);
             }
 
             try {
@@ -151,23 +185,34 @@ public class ShellTool implements McpTool {
             int exitCode = process.exitValue();
             String stdout = outStream.toString("UTF-8");
             String stderr = errStream.toString("UTF-8");
+            boolean success = (exitCode == 0);
 
-            StringBuilder sb = new StringBuilder();
-            if (!stdout.isEmpty()) {
-                sb.append(stdout);
-            }
-            if (!stderr.isEmpty()) {
-                if (sb.length() > 0 && !sb.toString().endsWith("\n")) sb.append("\n");
-                sb.append("[stderr]:\n").append(stderr);
-            }
-            if (exitCode != 0) {
-                sb.append("\n[进程退出码: ").append(exitCode).append("]");
-            }
-            return sb.toString();
+            return new CommandResult(success, stdout, stderr, exitCode, durationMs);
 
         } catch (Exception e) {
-            return "Shell 执行异常: " + e.getMessage();
+            long durationMs = System.currentTimeMillis() - startTime;
+            return new CommandResult(false, "", "Shell 执行异常: " + e.getMessage(), -1, durationMs);
         }
+    }
+
+    public String runShellCommand(String command, String cwdStr, int timeoutMs) {
+        CommandResult result = run(command, cwdStr, timeoutMs);
+        if (!result.success && result.exitCode == -1 && result.stdout.isEmpty()) {
+            return result.stderr;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        if (!result.stdout.isEmpty()) {
+            sb.append(result.stdout);
+        }
+        if (!result.stderr.isEmpty()) {
+            if (sb.length() > 0 && !sb.toString().endsWith("\n")) sb.append("\n");
+            sb.append("[stderr]:\n").append(result.stderr);
+        }
+        if (result.exitCode != 0) {
+            sb.append("\n[进程退出码: ").append(result.exitCode).append("]");
+        }
+        return sb.toString();
     }
 
     private static void copyStream(InputStream in, OutputStream out) {

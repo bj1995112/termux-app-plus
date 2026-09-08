@@ -59,6 +59,9 @@ public class TermuxMcpActivity extends AppCompatActivity {
     private SwitchMaterial mSwitchToolFeedback;
     private SwitchMaterial mSwitchToolUrl;
     private SwitchMaterial mSwitchToolDownload;
+    private SwitchMaterial mSwitchToolPython;
+    private SwitchMaterial mSwitchToolGit;
+    private SwitchMaterial mSwitchToolPm2;
 
     // OpenAI 官方原生安全隧道
     private SwitchMaterial mSwitchOpenAiTunnel;
@@ -924,6 +927,33 @@ public class TermuxMcpActivity extends AppCompatActivity {
             "允许 AI 下载网络文件并直接保存至手机 Download 目录",
             mSwitchToolDownload, density
         ));
+        addDivider(toolsLayout, density);
+
+        // 10. Python 脚本与代码执行
+        mSwitchToolPython = new SwitchMaterial(this);
+        toolsLayout.addView(createSwitchRow(
+            "Python 脚本与代码执行 (python_run)",
+            "允许 AI 直接执行 Python 代码或运行指定 .py 文件并获取完整耗时回显",
+            mSwitchToolPython, density
+        ));
+        addDivider(toolsLayout, density);
+
+        // 11. Git 版本控制
+        mSwitchToolGit = new SwitchMaterial(this);
+        toolsLayout.addView(createSwitchRow(
+            "Git 版本控制管理 (git_status/pull/clone/log/diff)",
+            "允许 AI 检查代码仓库状态、拉取更新、克隆及查看修改历史",
+            mSwitchToolGit, density
+        ));
+        addDivider(toolsLayout, density);
+
+        // 12. PM2 进程守护
+        mSwitchToolPm2 = new SwitchMaterial(this);
+        toolsLayout.addView(createSwitchRow(
+            "PM2 进程守护管理 (pm2_list/start/stop/restart/logs/save)",
+            "允许 AI 管理与监控 Termux 原生或 Ubuntu 容器内的后台守护服务",
+            mSwitchToolPm2, density
+        ));
 
         cardTools.addView(toolsLayout);
         content.addView(cardTools);
@@ -1036,7 +1066,7 @@ public class TermuxMcpActivity extends AppCompatActivity {
             Toast.makeText(this, isChecked ? "已启用 CPU 唤醒保活 (WakeLock)" : "已关闭 CPU 唤醒保活", Toast.LENGTH_SHORT).show();
         });
 
-        // 绑定 9 大工具独立开关
+        // 绑定 12 大工具独立开关
         bindToolSwitch(mSwitchToolExec, TermuxMcpManager.PREF_KEY_TOOL_EXEC_CMD, "终端命令执行");
         bindToolSwitch(mSwitchToolFile, TermuxMcpManager.PREF_KEY_TOOL_FILE_OPS, "文件管理读写");
         bindToolSwitch(mSwitchToolSys, TermuxMcpManager.PREF_KEY_TOOL_SYSTEM_INFO, "系统状态查询");
@@ -1046,6 +1076,9 @@ public class TermuxMcpActivity extends AppCompatActivity {
         bindToolSwitch(mSwitchToolFeedback, TermuxMcpManager.PREF_KEY_TOOL_FEEDBACK, "通知气泡与振动");
         bindToolSwitch(mSwitchToolUrl, TermuxMcpManager.PREF_KEY_TOOL_OPEN_URL, "浏览器打开网页");
         bindToolSwitch(mSwitchToolDownload, TermuxMcpManager.PREF_KEY_TOOL_DOWNLOAD, "高速网络下载");
+        bindToolSwitch(mSwitchToolPython, TermuxMcpManager.PREF_KEY_TOOL_PYTHON, "Python 脚本执行");
+        bindToolSwitch(mSwitchToolGit, TermuxMcpManager.PREF_KEY_TOOL_GIT, "Git 版本控制");
+        bindToolSwitch(mSwitchToolPm2, TermuxMcpManager.PREF_KEY_TOOL_PM2, "PM2 进程守护");
 
         // 绑定 OpenAI 官方原生安全隧道开关
         mSwitchOpenAiTunnel.setOnCheckedChangeListener((buttonView, isChecked) -> {
@@ -1133,7 +1166,7 @@ public class TermuxMcpActivity extends AppCompatActivity {
                 "令牌端点: " + primaryEndpoint + "/oauth/token"
             );
 
-            // 同步 9 个独立工具开关状态
+            // 同步 12 个独立工具开关状态
             mSwitchToolExec.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_EXEC_CMD));
             mSwitchToolFile.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_FILE_OPS));
             mSwitchToolSys.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_SYSTEM_INFO));
@@ -1143,6 +1176,9 @@ public class TermuxMcpActivity extends AppCompatActivity {
             mSwitchToolFeedback.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_FEEDBACK));
             mSwitchToolUrl.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_OPEN_URL));
             mSwitchToolDownload.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_DOWNLOAD));
+            mSwitchToolPython.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_PYTHON));
+            mSwitchToolGit.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_GIT));
+            mSwitchToolPm2.setChecked(manager.isToolEnabled(this, TermuxMcpManager.PREF_KEY_TOOL_PM2));
 
             // 同步 OpenAI 官方原生安全隧道状态
             OpenAiTunnelManager openAiMgr = OpenAiTunnelManager.getInstance();
