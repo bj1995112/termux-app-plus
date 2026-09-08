@@ -1172,9 +1172,11 @@ public class TermuxMcpServer {
                     // 兼容旧版客户端可能检查的 protocolVersion 单值
                     discResult.put("protocolVersion", protocolVersion);
 
-                    // 2. Capabilities 能力声明（使用静态工具空对象能力声明 tools: {}，杜绝 listChanged 误导客户端）
+                    // 2. Capabilities 能力声明（明确声明 tools: { listChanged: false }）
                     JSONObject capabilities = new JSONObject();
-                    capabilities.put("tools", new JSONObject());
+                    JSONObject toolsCap = new JSONObject();
+                    toolsCap.put("listChanged", false);
+                    capabilities.put("tools", toolsCap);
                     capabilities.put("resources", new JSONObject());
                     capabilities.put("prompts", new JSONObject());
                     discResult.put("capabilities", capabilities);
@@ -1213,9 +1215,11 @@ public class TermuxMcpServer {
                     initSupportedVersions.put("2024-11-05");
                     initResult.put("supportedVersions", initSupportedVersions);
 
-                    // 规范 tools 能力声明 tools: {}
+                    // 规范 tools 能力声明 tools: { listChanged: false }
                     JSONObject capabilities = new JSONObject();
-                    capabilities.put("tools", new JSONObject());
+                    JSONObject toolsCap = new JSONObject();
+                    toolsCap.put("listChanged", false);
+                    capabilities.put("tools", toolsCap);
                     initResult.put("capabilities", capabilities);
 
                     JSONObject serverInfo = new JSONObject();
@@ -1246,35 +1250,34 @@ public class TermuxMcpServer {
                     break;
 
                 case "tools/list":
-                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] tools/list received id=" + sessionId);
+                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] tools/list received");
                     JSONObject listResult = new JSONObject();
-                    JSONArray toolsArray = ToolRegistry.getInstance().getMcpToolsDefinition(mContext);
-                    if (toolsArray == null) {
-                        toolsArray = new JSONArray();
-                    }
-                    boolean hasPing = false;
-                    for (int i = 0; i < toolsArray.length(); i++) {
-                        JSONObject t = toolsArray.optJSONObject(i);
-                        if (t != null && "ping".equals(t.optString("name"))) {
-                            hasPing = true;
-                            break;
+                    JSONArray toolsArray = new JSONArray();
+
+                    // 1. 默认包含 ping 连通性测试工具
+                    JSONObject pingTool = new JSONObject();
+                    pingTool.put("name", "ping");
+                    pingTool.put("description", "MCP connectivity test");
+                    JSONObject pingSchema = new JSONObject();
+                    pingSchema.put("type", "object");
+                    pingSchema.put("properties", new JSONObject());
+                    pingTool.put("inputSchema", pingSchema);
+                    toolsArray.put(pingTool);
+
+                    // 2. 挂载所有系统与内置工具
+                    JSONArray regTools = ToolRegistry.getInstance().getMcpToolsDefinition(mContext);
+                    if (regTools != null) {
+                        for (int i = 0; i < regTools.length(); i++) {
+                            JSONObject t = regTools.optJSONObject(i);
+                            if (t != null && !"ping".equals(t.optString("name"))) {
+                                toolsArray.put(t);
+                            }
                         }
                     }
-                    if (!hasPing) {
-                        try {
-                            JSONObject pingTool = new JSONObject();
-                            pingTool.put("name", "ping");
-                            pingTool.put("description", "Ping test tool to verify MCP Server connectivity");
-                            JSONObject pSchema = new JSONObject();
-                            pSchema.put("type", "object");
-                            pSchema.put("properties", new JSONObject());
-                            pingTool.put("inputSchema", pSchema);
-                            toolsArray.put(pingTool);
-                        } catch (Exception ignored) {}
-                    }
+
                     listResult.put("tools", toolsArray);
                     resp.put("result", listResult);
-                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] tools/list response sent id=" + sessionId);
+                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] tools/list response sent");
                     break;
 
                 case "tools/call":
@@ -1475,12 +1478,7 @@ public class TermuxMcpServer {
 
         TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] DELETE received session=" + sessionId);
 
-        // 关键防护：DELETE 不立即从 mSessions 中注销会话，只关闭活跃的 SSE 长连接流
-        // 确保同一个 mcp-session-id 在健康探测或会话释放后仍可继续接收后续请求
-        if (sessionId != null && !sessionId.isEmpty()) {
-            mSseSessions.remove(sessionId);
-            TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] session closed session=" + sessionId);
-        }
+        // 关键防护：收到 DELETE 时暂时不关闭 SSE 连接，也不注销 session，等待 tools/list / tools/call 流程完成
         sendEmptyResponse(out, 204, sessionId, keepAlive);
     }
 
