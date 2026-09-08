@@ -63,7 +63,9 @@ public class TermuxMcpManager {
     }
 
     private static SharedPreferences getPrefs(Context context) {
-        return context.getApplicationContext().getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        if (context == null) return null;
+        Context appCtx = context.getApplicationContext();
+        return (appCtx != null ? appCtx : context).getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
     }
 
     public boolean isEnabled(Context context) {
@@ -119,21 +121,25 @@ public class TermuxMcpManager {
     }
 
     public int getExecTimeoutSec(Context context) {
-        return getPrefs(context).getInt(PREF_KEY_EXEC_TIMEOUT_SEC, DEFAULT_EXEC_TIMEOUT_SEC);
+        SharedPreferences prefs = getPrefs(context);
+        return prefs != null ? prefs.getInt(PREF_KEY_EXEC_TIMEOUT_SEC, DEFAULT_EXEC_TIMEOUT_SEC) : DEFAULT_EXEC_TIMEOUT_SEC;
     }
 
     public void setExecTimeoutSec(Context context, int sec) {
         if (sec < 5) sec = 5;
         if (sec > 86400) sec = 86400; // 最大 24 小时
-        getPrefs(context).edit().putInt(PREF_KEY_EXEC_TIMEOUT_SEC, sec).apply();
+        SharedPreferences prefs = getPrefs(context);
+        if (prefs != null) prefs.edit().putInt(PREF_KEY_EXEC_TIMEOUT_SEC, sec).apply();
     }
 
     public boolean isWakeLockEnabled(Context context) {
-        return getPrefs(context).getBoolean(PREF_KEY_WAKELOCK, true);
+        SharedPreferences prefs = getPrefs(context);
+        return prefs != null ? prefs.getBoolean(PREF_KEY_WAKELOCK, true) : true;
     }
 
     public void setWakeLockEnabled(Context context, boolean enabled) {
-        getPrefs(context).edit().putBoolean(PREF_KEY_WAKELOCK, enabled).apply();
+        SharedPreferences prefs = getPrefs(context);
+        if (prefs != null) prefs.edit().putBoolean(PREF_KEY_WAKELOCK, enabled).apply();
         if (isServerRunning()) {
             if (enabled) {
                 acquireWakeLock(context);
@@ -144,7 +150,8 @@ public class TermuxMcpManager {
     }
 
     public String getPublicHost(Context context) {
-        return getPrefs(context).getString(PREF_KEY_PUBLIC_HOST, "");
+        SharedPreferences prefs = getPrefs(context);
+        return prefs != null ? prefs.getString(PREF_KEY_PUBLIC_HOST, "") : "";
     }
 
     public void setPublicHost(Context context, String host) {
@@ -154,11 +161,13 @@ public class TermuxMcpManager {
         } else {
             host = "";
         }
-        getPrefs(context).edit().putString(PREF_KEY_PUBLIC_HOST, host).apply();
+        SharedPreferences prefs = getPrefs(context);
+        if (prefs != null) prefs.edit().putString(PREF_KEY_PUBLIC_HOST, host).apply();
     }
 
     public boolean isToolEnabled(Context context, String toolKey) {
-        return getPrefs(context).getBoolean(toolKey, true);
+        SharedPreferences prefs = getPrefs(context);
+        return prefs != null ? prefs.getBoolean(toolKey, true) : true;
     }
 
     public void setToolEnabled(Context context, String toolKey, boolean enabled) {

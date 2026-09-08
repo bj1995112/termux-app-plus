@@ -454,7 +454,8 @@ public class OpenAiTunnelManager {
                 }
 
                 if (effectiveProxy != null && "http".equalsIgnoreCase(effectiveProxy.scheme)) {
-                    cmd.add("--http-proxy");
+                    // 使用 control-plane 专属 HTTP 代理参数，避免全局代理误拦截本地回环 127.0.0.1 目标端口
+                    cmd.add("--control-plane.http-proxy");
                     cmd.add(effectiveProxy.getUrl());
                 }
 
@@ -476,16 +477,23 @@ public class OpenAiTunnelManager {
                     env.put("CA_BUNDLE", caBundle.getAbsolutePath());
                 }
 
-                // 注入代理环境变量 (ALL_PROXY 完美通吃 SOCKS5/HTTP 并且使 Go 代理远端 DNS)
+                // 注入代理环境变量：
+                // 1. ALL_PROXY 适用于 SOCKS5 与 HTTP，并指导 Go 远端解析 DNS
+                // 2. HTTP_PROXY / HTTPS_PROXY 仅在 scheme 为 http/https 时设置（Go 严禁将 socks5:// 写入 HTTP_PROXY，否则抛 scheme unsupported）
+                // 3. 强制注入 NO_PROXY，杜绝 tunnel-client 将本地 127.0.0.1 的 MCP 请求转发至外部代理
                 if (effectiveProxy != null) {
                     String url = effectiveProxy.getUrl();
                     env.put("ALL_PROXY", url);
                     env.put("all_proxy", url);
-                    env.put("HTTPS_PROXY", url);
-                    env.put("HTTP_PROXY", url);
-                    env.put("https_proxy", url);
-                    env.put("http_proxy", url);
+                    if ("http".equalsIgnoreCase(effectiveProxy.scheme) || "https".equalsIgnoreCase(effectiveProxy.scheme)) {
+                        env.put("HTTPS_PROXY", url);
+                        env.put("HTTP_PROXY", url);
+                        env.put("https_proxy", url);
+                        env.put("http_proxy", url);
+                    }
                 }
+                env.put("NO_PROXY", "127.0.0.1,localhost,::1");
+                env.put("no_proxy", "127.0.0.1,localhost,::1");
 
                 mLogBuffer.clear();
                 appendLog("[Termux+] 🚀 正在启动 OpenAI 官方原生安全隧道...");

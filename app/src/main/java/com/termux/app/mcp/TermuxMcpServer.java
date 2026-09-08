@@ -18,7 +18,9 @@ import com.termux.shared.termux.TermuxConstants;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -162,24 +164,42 @@ public class TermuxMcpServer {
     }
 
     /**
-     * 处理单个 HTTP 客户端请求
+     * 读取 HTTP 协议单行文本（以 CRLF 或 LF 结尾，按标准 ISO-8859-1 解码）
+     */
+    private static String readHttpLine(InputStream in) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        int b;
+        while ((b = in.read()) != -1) {
+            if (b == '\n') {
+                break;
+            }
+            if (b != '\r') {
+                baos.write(b);
+            }
+        }
+        if (b == -1 && baos.size() == 0) {
+            return null; // 连接正常关闭或已到 EOF
+        }
+        return baos.toString("ISO-8859-1");
+    }
+
+    /**
+     * 处理单个 HTTP 客户端请求（字节级流式解析，彻底消除 UTF-8 字符/字节长度差异导致的阻塞卡死）
      */
     private void handleClientSocket(Socket socket) {
-        try (InputStream in = socket.getInputStream();
+        try (BufferedInputStream in = new BufferedInputStream(socket.getInputStream());
              OutputStream out = socket.getOutputStream()) {
 
-            BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
-
             while (mRunning && !socket.isClosed()) {
-                // 设置 5 秒 Keep-Alive 空闲等待超时
+                // 设置 15 秒 Keep-Alive 空闲等待超时
                 try {
-                    socket.setSoTimeout(5000);
+                    socket.setSoTimeout(15000);
                 } catch (Exception ignored) {}
 
                 // 1. 读取 HTTP 请求行
                 String requestLine;
                 try {
-                    requestLine = reader.readLine();
+                    requestLine = readHttpLine(in);
                 } catch (SocketTimeoutException | SocketException e) {
                     break; // 超时或客户端正常关闭连接
                 }
@@ -191,6 +211,7 @@ public class TermuxMcpServer {
                 if (parts.length < 2) break;
                 String method = parts[0].toUpperCase();
                 String fullPath = parts[1];
+                String httpVersion = parts.length >= 3 ? parts[2].toUpperCase() : "HTTP/1.1";
 
                 // 解析 Path 与 Query String
                 String path = fullPath;
@@ -215,7 +236,7 @@ public class TermuxMcpServer {
                 Map<String, String> headers = new HashMap<>();
                 String headerLine;
                 int contentLength = 0;
-                while ((headerLine = reader.readLine()) != null && !headerLine.isEmpty()) {
+                while ((headerLine = readHttpLine(in)) != null && !headerLine.isEmpty()) {
                     int colonIdx = headerLine.indexOf(':');
                     if (colonIdx != -1) {
                         String name = headerLine.substring(0, colonIdx).trim().toLowerCase();
@@ -229,29 +250,35 @@ public class TermuxMcpServer {
                     }
                 }
 
+                // 判断 Keep-Alive 状态
+                String connHeader = headers.get("connection");
+                boolean isHttp10 = "HTTP/1.0".equalsIgnoreCase(httpVersion);
+                boolean keepAlive = isHttp10 ? "keep-alive".equalsIgnoreCase(connHeader) : !"close".equalsIgnoreCase(connHeader);
+
                 // 3. 处理 CORS 跨域预检请求 (OPTIONS)
                 if ("OPTIONS".equalsIgnoreCase(method)) {
                     sendCorsPreflight(out);
+                    if (!keepAlive) break;
                     continue;
                 }
 
-                // 4. 读取 HTTP Body 内容 (支持 Content-Length 与 Transfer-Encoding: chunked 双模)
+                // 4. 读取 HTTP Body 内容 (以原生 byte[] 读取精确的 Content-Length 字节数，杜绝 UTF-8 字符阻塞)
                 String body = "";
                 if (contentLength > 0) {
-                    char[] buf = new char[contentLength];
+                    byte[] buf = new byte[contentLength];
                     int totalRead = 0;
                     while (totalRead < contentLength) {
-                        int read = reader.read(buf, totalRead, contentLength - totalRead);
+                        int read = in.read(buf, totalRead, contentLength - totalRead);
                         if (read == -1) break;
                         totalRead += read;
                     }
-                    body = new String(buf, 0, totalRead);
+                    body = new String(buf, 0, totalRead, StandardCharsets.UTF_8);
                 } else {
                     String te = headers.get("transfer-encoding");
                     if (te != null && te.toLowerCase().contains("chunked")) {
-                        StringBuilder sb = new StringBuilder();
+                        ByteArrayOutputStream bodyStream = new ByteArrayOutputStream();
                         while (true) {
-                            String sizeLine = reader.readLine();
+                            String sizeLine = readHttpLine(in);
                             if (sizeLine == null) break;
                             sizeLine = sizeLine.trim();
                             if (sizeLine.isEmpty()) continue;
@@ -265,26 +292,26 @@ public class TermuxMcpServer {
                             }
                             if (chunkSize <= 0) {
                                 while (true) {
-                                    String tr = reader.readLine();
+                                    String tr = readHttpLine(in);
                                     if (tr == null || tr.trim().isEmpty()) break;
                                 }
                                 break;
                             }
-                            char[] cbuf = new char[chunkSize];
+                            byte[] cbuf = new byte[chunkSize];
                             int cread = 0;
                             while (cread < chunkSize) {
-                                int r = reader.read(cbuf, cread, chunkSize - cread);
+                                int r = in.read(cbuf, cread, chunkSize - cread);
                                 if (r == -1) break;
                                 cread += r;
                             }
-                            sb.append(cbuf, 0, cread);
-                            reader.readLine(); // 消耗 CRLF
+                            bodyStream.write(cbuf, 0, cread);
+                            readHttpLine(in); // 消耗 CRLF
                         }
-                        body = sb.toString();
+                        body = bodyStream.toString("UTF-8");
                     }
                 }
 
-                // 读取完成后，解除长任务等待期间的 Socket 读取超时
+                // 读取完成后，解除后续任务处理期间的超时
                 try {
                     socket.setSoTimeout(0);
                 } catch (Exception ignored) {}
@@ -307,13 +334,13 @@ public class TermuxMcpServer {
                     // 最新标准 Streamable HTTP 单端点 (2026 MCP 规范：支持 POST 消息、GET 事件流、DELETE 会话清理)
                     if ("GET".equalsIgnoreCase(method)) {
                         handleMcpGet(out, socket, headers, queryParams);
-                        break;
+                        break; // SSE 持久流接管连接
                     } else if ("DELETE".equalsIgnoreCase(method)) {
-                        handleMcpDelete(out, headers, queryParams);
+                        handleMcpDelete(out, headers, queryParams, keepAlive);
                     } else if ("POST".equalsIgnoreCase(method)) {
-                        handleMcpPost(body, out, headers, queryParams, path);
+                        handleMcpPost(body, out, headers, queryParams, path, keepAlive);
                     } else {
-                        sendJsonResponse(out, 405, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Method not allowed\"}}");
+                        sendJsonResponse(out, 405, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Method not allowed\"}}", null, keepAlive);
                     }
                 } else if (path.equals("/sse") && "GET".equals(method)) {
                     // 经典 SSE 订阅端点（接管长连接直到客户端断开）
@@ -321,7 +348,7 @@ public class TermuxMcpServer {
                     break;
                 } else if ((path.startsWith("/messages") || path.equals("/sse")) && "POST".equals(method)) {
                     // 经典 SSE 消息端点或直接 POST 到 /sse (支持 Streamable HTTP / MCP 双模)
-                    handleMcpPost(body, out, headers, queryParams, path);
+                    handleMcpPost(body, out, headers, queryParams, path, keepAlive);
                 } else if (path.equals("/openapi.json") && "GET".equals(method)) {
                     // ChatGPT Custom GPTs Actions 专属 Schema
                     handleOpenApiSpec(headers, out);
@@ -356,12 +383,11 @@ public class TermuxMcpServer {
                     // 健康检查与状态展示
                     handleStatus(out);
                 } else {
-                    sendJsonResponse(out, 404, "{\"error\": \"Not Found\"}");
+                    sendJsonResponse(out, 404, "{\"error\": \"Not Found\"}", null, keepAlive);
                 }
 
                 // 客户端若要求关闭连接，则跳出循环
-                String connHeader = headers.get("connection");
-                if ("close".equalsIgnoreCase(connHeader)) {
+                if (!keepAlive) {
                     break;
                 }
             }
@@ -422,8 +448,9 @@ public class TermuxMcpServer {
     private void sendCorsPreflight(OutputStream out) throws IOException {
         String resp = "HTTP/1.1 204 No Content\r\n" +
             "Access-Control-Allow-Origin: *\r\n" +
-            "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" +
-            "Access-Control-Allow-Headers: Authorization, Content-Type, Mcp-Method, Mcp-Name\r\n" +
+            "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+            "Access-Control-Allow-Headers: Authorization, Content-Type, Mcp-Session-Id, Mcp-Method, Mcp-Name\r\n" +
+            "Access-Control-Expose-Headers: Mcp-Session-Id\r\n" +
             "Access-Control-Max-Age: 86400\r\n" +
             "Content-Length: 0\r\n\r\n";
         out.write(resp.getBytes(StandardCharsets.UTF_8));
@@ -440,37 +467,62 @@ public class TermuxMcpServer {
             case 401: return "Unauthorized";
             case 403: return "Forbidden";
             case 404: return "Not Found";
+            case 405: return "Method Not Allowed";
             case 500: return "Internal Server Error";
             default: return "OK";
         }
     }
 
     private void sendEmptyResponse(OutputStream out, int statusCode) throws IOException {
-        String resp = "HTTP/1.1 " + statusCode + " " + getStatusText(statusCode) + "\r\n" +
-            "Access-Control-Allow-Origin: *\r\n" +
-            "Content-Length: 0\r\n\r\n";
-        out.write(resp.getBytes(StandardCharsets.UTF_8));
+        sendEmptyResponse(out, statusCode, null, false);
+    }
+
+    private void sendEmptyResponse(OutputStream out, int statusCode, String sessionId, boolean keepAlive) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        sb.append("HTTP/1.1 ").append(statusCode).append(" ").append(getStatusText(statusCode)).append("\r\n");
+        sb.append("Access-Control-Allow-Origin: *\r\n");
+        sb.append("Access-Control-Expose-Headers: Mcp-Session-Id\r\n");
+        if (sessionId != null && !sessionId.isEmpty()) {
+            sb.append("Mcp-Session-Id: ").append(sessionId).append("\r\n");
+        }
+        sb.append("Content-Length: 0\r\n");
+        if (keepAlive) {
+            sb.append("Connection: keep-alive\r\n");
+        } else {
+            sb.append("Connection: close\r\n");
+        }
+        sb.append("\r\n");
+        out.write(sb.toString().getBytes(StandardCharsets.UTF_8));
         out.flush();
     }
 
     /**
      * 按照 MCP 官方 Streamable HTTP 标准（RFC 7230 分块传输编码 + text/event-stream 流式封装）输出响应
      */
-    private void sendChunkedSseResponse(OutputStream out, String sessionId, String sseEvent) throws IOException {
+    private void sendChunkedSseResponse(OutputStream out, String sessionId, String sseEvent, boolean keepAlive) throws IOException {
         byte[] payload = sseEvent.getBytes(StandardCharsets.UTF_8);
         String chunkHeader = Integer.toHexString(payload.length) + "\r\n";
         String chunkFooter = "\r\n0\r\n\r\n";
 
-        String respHeader = "HTTP/1.1 200 OK\r\n" +
-            "Content-Type: text/event-stream\r\n" +
-            "Cache-Control: no-cache, no-transform\r\n" +
-            "Connection: close\r\n" +
-            "x-accel-buffering: no\r\n" +
-            "Mcp-Session-Id: " + sessionId + "\r\n" +
-            "Transfer-Encoding: chunked\r\n" +
-            "Access-Control-Allow-Origin: *\r\n\r\n";
+        StringBuilder sb = new StringBuilder();
+        sb.append("HTTP/1.1 200 OK\r\n");
+        sb.append("Content-Type: text/event-stream\r\n");
+        sb.append("Cache-Control: no-cache, no-transform\r\n");
+        sb.append("x-accel-buffering: no\r\n");
+        sb.append("Access-Control-Allow-Origin: *\r\n");
+        sb.append("Access-Control-Expose-Headers: Mcp-Session-Id\r\n");
+        if (sessionId != null && !sessionId.isEmpty()) {
+            sb.append("Mcp-Session-Id: ").append(sessionId).append("\r\n");
+        }
+        sb.append("Transfer-Encoding: chunked\r\n");
+        if (keepAlive) {
+            sb.append("Connection: keep-alive\r\n");
+        } else {
+            sb.append("Connection: close\r\n");
+        }
+        sb.append("\r\n");
 
-        out.write(respHeader.getBytes(StandardCharsets.UTF_8));
+        out.write(sb.toString().getBytes(StandardCharsets.UTF_8));
         out.write(chunkHeader.getBytes(StandardCharsets.UTF_8));
         out.write(payload);
         out.write(chunkFooter.getBytes(StandardCharsets.UTF_8));
@@ -478,12 +530,27 @@ public class TermuxMcpServer {
     }
 
     private void sendJsonResponse(OutputStream out, int statusCode, String json) throws IOException {
+        sendJsonResponse(out, statusCode, json, null, false);
+    }
+
+    private void sendJsonResponse(OutputStream out, int statusCode, String json, String sessionId, boolean keepAlive) throws IOException {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-        String resp = "HTTP/1.1 " + statusCode + " " + getStatusText(statusCode) + "\r\n" +
-            "Content-Type: application/json; charset=utf-8\r\n" +
-            "Access-Control-Allow-Origin: *\r\n" +
-            "Content-Length: " + bytes.length + "\r\n\r\n";
-        out.write(resp.getBytes(StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder();
+        sb.append("HTTP/1.1 ").append(statusCode).append(" ").append(getStatusText(statusCode)).append("\r\n");
+        sb.append("Content-Type: application/json; charset=utf-8\r\n");
+        sb.append("Access-Control-Allow-Origin: *\r\n");
+        sb.append("Access-Control-Expose-Headers: Mcp-Session-Id\r\n");
+        if (sessionId != null && !sessionId.isEmpty()) {
+            sb.append("Mcp-Session-Id: ").append(sessionId).append("\r\n");
+        }
+        sb.append("Content-Length: ").append(bytes.length).append("\r\n");
+        if (keepAlive) {
+            sb.append("Connection: keep-alive\r\n");
+        } else {
+            sb.append("Connection: close\r\n");
+        }
+        sb.append("\r\n");
+        out.write(sb.toString().getBytes(StandardCharsets.UTF_8));
         out.write(bytes);
         out.flush();
     }
@@ -829,43 +896,90 @@ public class TermuxMcpServer {
     }
 
     /**
+     * 清理超过 1 小时未活动的过期会话
+     */
+    private void cleanExpiredSessions() {
+        long now = System.currentTimeMillis();
+        long sessionTimeout = 3600_000L; // 1 小时超时
+        mSessions.entrySet().removeIf(entry -> (now - entry.getValue().lastActiveAt) > sessionTimeout);
+    }
+
+    /**
      * 处理 MCP JSON-RPC 2.0 请求（同时支持 Streamable HTTP POST 与 SSE 消息通道）
      */
-    private void handleMcpPost(String body, OutputStream out, Map<String, String> headers, Map<String, String> queryParams, String path) throws IOException {
+    private void handleMcpPost(String body, OutputStream out, Map<String, String> headers, Map<String, String> queryParams, String path, boolean keepAlive) throws IOException {
         if (body == null || body.trim().isEmpty()) {
-            sendJsonResponse(out, 400, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32700,\"message\":\"Parse error: Empty body\"}}");
+            sendJsonResponse(out, 400, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32700,\"message\":\"Parse error: Empty body\"}}", null, keepAlive);
             return;
         }
+
+        JSONObject req;
+        try {
+            req = new JSONObject(body);
+        } catch (Exception e) {
+            sendJsonResponse(out, 400, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32700,\"message\":\"Parse error: Invalid JSON\"}}", null, keepAlive);
+            return;
+        }
+
+        String method = req.optString("method", "");
+        Object id = req.opt("id");
+        boolean isNotification = (id == null || method.startsWith("notifications/"));
 
         String sessionId = headers != null ? headers.get("mcp-session-id") : null;
         if ((sessionId == null || sessionId.isEmpty()) && queryParams != null) {
             sessionId = queryParams.get("sessionId");
+            if (sessionId == null || sessionId.isEmpty()) {
+                sessionId = queryParams.get("mcp-session-id");
+            }
         }
 
-        try {
-            JSONObject req = new JSONObject(body);
-            String method = req.optString("method", "");
-            Object id = req.opt("id");
+        boolean isLegacyEndpoint = (path != null && (path.startsWith("/messages") || path.equals("/sse")));
+        boolean isInitialize = "initialize".equals(method) || "server/discover".equals(method);
 
-            // 1. JSON-RPC 2.0 规范：若请求为 Notification（无 id 或以 notifications/ 开头），绝不可返回带有 body 的 JSON 响应，直接返回标准的 HTTP 202 Accepted 且 Content-Length: 0
-            if (id == null || method.startsWith("notifications/")) {
-                sendEmptyResponse(out, 202);
+        // 1. 会话状态机与严格校验（符合 MCP Streamable HTTP 规范）
+        if (isInitialize) {
+            // initialize 统一分配或确认全局 Mcp-Session-Id
+            if (sessionId == null || sessionId.isEmpty() || !mSessions.containsKey(sessionId)) {
+                sessionId = UUID.randomUUID().toString();
+            }
+            mSessions.put(sessionId, new McpSession(sessionId));
+        } else if (!isLegacyEndpoint) {
+            // 标准 /mcp 端点严格检验会话凭据：缺失返回 400，不存在/已失效返回 404
+            if (sessionId == null || sessionId.isEmpty()) {
+                sendJsonResponse(out, 400, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Missing Mcp-Session-Id header\"}}", null, keepAlive);
                 return;
             }
-
-            // 会话状态机：如果是 initialize，生成全新的 Mcp-Session-Id；若是后续请求，保持/刷新对应会话
-            if ("initialize".equals(method) || "server/discover".equals(method) || sessionId == null || sessionId.isEmpty()) {
-                sessionId = UUID.randomUUID().toString();
-                mSessions.put(sessionId, new McpSession(sessionId));
-            } else {
-                McpSession s = mSessions.get(sessionId);
-                if (s != null) {
-                    s.lastActiveAt = System.currentTimeMillis();
+            McpSession session = mSessions.get(sessionId);
+            if (session == null) {
+                sendJsonResponse(out, 404, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Session not found or expired\"}}", sessionId, keepAlive);
+                return;
+            }
+            session.lastActiveAt = System.currentTimeMillis();
+        } else {
+            // 经典 /messages 或 /sse 端点兼容
+            if (sessionId != null && !sessionId.isEmpty()) {
+                McpSession session = mSessions.get(sessionId);
+                if (session != null) {
+                    session.lastActiveAt = System.currentTimeMillis();
                 } else {
                     mSessions.put(sessionId, new McpSession(sessionId));
                 }
+            } else {
+                sessionId = UUID.randomUUID().toString();
+                mSessions.put(sessionId, new McpSession(sessionId));
             }
+        }
 
+        // 2. JSON-RPC 2.0 规范：Notification 请求（如 notifications/initialized）严格禁止返回带 body 的响应
+        // 必须返回 HTTP 202 Accepted、Content-Length: 0 与 Mcp-Session-Id 响应头
+        if (isNotification) {
+            sendEmptyResponse(out, 202, sessionId, keepAlive);
+            return;
+        }
+
+        cleanExpiredSessions();
+
+        try {
             JSONObject resp = new JSONObject();
             resp.put("jsonrpc", "2.0");
             resp.put("id", id);
@@ -888,7 +1002,6 @@ public class TermuxMcpServer {
                     }
                     initResult.put("protocolVersion", clientVersion);
 
-                    // 与官方 Node SDK 严格对齐：仅声明 tools 能力，避免声明未实际提供的空 resources/prompts 导致客户端校验失败
                     JSONObject capabilities = new JSONObject();
                     JSONObject toolsCap = new JSONObject();
                     toolsCap.put("listChanged", true);
@@ -953,8 +1066,7 @@ public class TermuxMcpServer {
                     break;
             }
 
-            // 2. 如果有活跃的 SSE 会话（比如客户端正在长连接监听 GET /mcp 或 GET /sse）：
-            //    同时通过 SSE 事件通道广播 JSON-RPC 响应
+            // 3. 若有活跃的 SSE 客户端长连接在监听本会话，广播该消息
             if (sessionId != null && mSseSessions.containsKey(sessionId)) {
                 OutputStream sseOut = mSseSessions.get(sessionId);
                 if (sseOut != null) {
@@ -962,28 +1074,21 @@ public class TermuxMcpServer {
                 }
             }
 
-            // 3. 对于当前 HTTP POST /mcp 请求连接本身的响应：
-            //    按照官方 Streamable HTTP 标准（RFC 7230 分块传输编码 + text/event-stream 流式封装）输出
-            String accept = headers != null ? headers.get("accept") : "";
-            boolean isMcpEndpoint = path != null && path.contains("/mcp");
-            if (isMcpEndpoint || (accept != null && accept.contains("text/event-stream"))) {
+            // 4. 内容协商与输出：
+            // 遵循 MCP Streamable HTTP 规范：优先以标准 application/json 输出，仅在客户端明确且排他性要求 SSE 时才分块封装
+            String accept = headers != null ? headers.get("accept") : null;
+            boolean wantsSse = (accept != null && accept.contains("text/event-stream") && !accept.contains("application/json") && !accept.contains("*/*"));
+
+            if (wantsSse) {
                 String sseData = "event: message\ndata: " + resp.toString() + "\n\n";
-                sendChunkedSseResponse(out, sessionId, sseData);
+                sendChunkedSseResponse(out, sessionId, sseData, keepAlive);
             } else {
-                byte[] rawBytes = resp.toString().getBytes(StandardCharsets.UTF_8);
-                String respHeader = "HTTP/1.1 200 OK\r\n" +
-                    "Content-Type: application/json; charset=utf-8\r\n" +
-                    "Mcp-Session-Id: " + sessionId + "\r\n" +
-                    "Access-Control-Allow-Origin: *\r\n" +
-                    "Content-Length: " + rawBytes.length + "\r\n\r\n";
-                out.write(respHeader.getBytes(StandardCharsets.UTF_8));
-                out.write(rawBytes);
-                out.flush();
+                sendJsonResponse(out, 200, resp.toString(), sessionId, keepAlive);
             }
 
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Error processing MCP request", e);
-            sendJsonResponse(out, 500, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32603,\"message\":\"Internal error: " + e.getMessage() + "\"}}");
+            sendJsonResponse(out, 500, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32603,\"message\":\"Internal error: " + e.getMessage() + "\"}}", sessionId, keepAlive);
         }
     }
 
@@ -994,12 +1099,23 @@ public class TermuxMcpServer {
         String sessionId = headers != null ? headers.get("mcp-session-id") : null;
         if ((sessionId == null || sessionId.isEmpty()) && queryParams != null) {
             sessionId = queryParams.get("sessionId");
-        }
-        if (sessionId == null || sessionId.isEmpty()) {
-            sessionId = UUID.randomUUID().toString();
+            if (sessionId == null || sessionId.isEmpty()) {
+                sessionId = queryParams.get("mcp-session-id");
+            }
         }
 
-        mSessions.put(sessionId, new McpSession(sessionId));
+        if (sessionId == null || sessionId.isEmpty()) {
+            sendJsonResponse(out, 400, "{\"error\": \"Missing Mcp-Session-Id header for SSE stream\"}", null, false);
+            return;
+        }
+
+        McpSession session = mSessions.get(sessionId);
+        if (session == null) {
+            sendJsonResponse(out, 404, "{\"error\": \"Session not found or expired\"}", sessionId, false);
+            return;
+        }
+        session.lastActiveAt = System.currentTimeMillis();
+
         mSseSessions.put(sessionId, out);
 
         StringBuilder sb = new StringBuilder();
@@ -1008,9 +1124,10 @@ public class TermuxMcpServer {
         sb.append("Cache-Control: no-cache, no-transform\r\n");
         sb.append("Connection: keep-alive\r\n");
         sb.append("x-accel-buffering: no\r\n");
-        sb.append("mcp-session-id: ").append(sessionId).append("\r\n");
+        sb.append("Mcp-Session-Id: ").append(sessionId).append("\r\n");
         sb.append("Transfer-Encoding: chunked\r\n");
-        sb.append("Access-Control-Allow-Origin: *\r\n\r\n");
+        sb.append("Access-Control-Allow-Origin: *\r\n");
+        sb.append("Access-Control-Expose-Headers: Mcp-Session-Id\r\n\r\n");
         out.write(sb.toString().getBytes(StandardCharsets.UTF_8));
         out.flush();
 
@@ -1037,16 +1154,29 @@ public class TermuxMcpServer {
     /**
      * 处理 MCP Streamable HTTP DELETE 请求（客户端主动清理关闭会话）
      */
-    private void handleMcpDelete(OutputStream out, Map<String, String> headers, Map<String, String> queryParams) throws IOException {
+    private void handleMcpDelete(OutputStream out, Map<String, String> headers, Map<String, String> queryParams, boolean keepAlive) throws IOException {
         String sessionId = headers != null ? headers.get("mcp-session-id") : null;
         if ((sessionId == null || sessionId.isEmpty()) && queryParams != null) {
             sessionId = queryParams.get("sessionId");
+            if (sessionId == null || sessionId.isEmpty()) {
+                sessionId = queryParams.get("mcp-session-id");
+            }
         }
-        if (sessionId != null && !sessionId.isEmpty()) {
-            mSessions.remove(sessionId);
-            mSseSessions.remove(sessionId);
+
+        if (sessionId == null || sessionId.isEmpty()) {
+            sendJsonResponse(out, 400, "{\"error\": \"Missing Mcp-Session-Id header\"}", null, keepAlive);
+            return;
         }
-        sendEmptyResponse(out, 200);
+
+        McpSession session = mSessions.remove(sessionId);
+        mSseSessions.remove(sessionId);
+
+        if (session == null) {
+            sendJsonResponse(out, 404, "{\"error\": \"Session not found or already closed\"}", sessionId, keepAlive);
+            return;
+        }
+
+        sendEmptyResponse(out, 204, sessionId, keepAlive);
     }
 
     /**
@@ -1071,17 +1201,19 @@ public class TermuxMcpServer {
      */
     private void handleSseGet(OutputStream out, Socket socket) throws IOException {
         String sessionId = UUID.randomUUID().toString();
+        mSessions.put(sessionId, new McpSession(sessionId));
         mSseSessions.put(sessionId, out);
 
         String header = "HTTP/1.1 200 OK\r\n" +
             "Content-Type: text/event-stream\r\n" +
             "Cache-Control: no-cache\r\n" +
             "Connection: keep-alive\r\n" +
-            "Access-Control-Allow-Origin: *\r\n\r\n";
+            "Access-Control-Allow-Origin: *\r\n" +
+            "Access-Control-Expose-Headers: Mcp-Session-Id\r\n\r\n";
         out.write(header.getBytes(StandardCharsets.UTF_8));
 
         // 发送初始化端点事件
-        String endpointEvent = "event: endpoint\r\ndata: /messages?sessionId=" + sessionId + "\r\n\r\n";
+        String endpointEvent = "event: endpoint\ndata: /messages?sessionId=" + sessionId + "\r\n\r\n";
         out.write(endpointEvent.getBytes(StandardCharsets.UTF_8));
         out.flush();
 
