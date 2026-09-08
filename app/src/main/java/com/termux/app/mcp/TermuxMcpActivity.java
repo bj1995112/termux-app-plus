@@ -166,6 +166,16 @@ public class TermuxMcpActivity extends AppCompatActivity {
         mTvAddress.setPadding(0, 0, 0, (int) (8 * density));
         statusLayout.addView(mTvAddress);
 
+        MaterialButton btnShowMcpLogs = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        btnShowMcpLogs.setText("📜 查看 MCP 服务实时运行日志");
+        btnShowMcpLogs.setTextSize(12);
+        LinearLayout.LayoutParams btnMcpLogsParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnMcpLogsParams.setMargins(0, (int) (4 * density), 0, (int) (8 * density));
+        btnShowMcpLogs.setLayoutParams(btnMcpLogsParams);
+        btnShowMcpLogs.setOnClickListener(v -> showMcpLogsDialog());
+        statusLayout.addView(btnShowMcpLogs);
+
         addDivider(statusLayout, density);
 
         mSwitchAutoStart = new SwitchMaterial(this);
@@ -1331,6 +1341,77 @@ public class TermuxMcpActivity extends AppCompatActivity {
                 }
             })
             .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showMcpLogsDialog() {
+        LinearLayout rootLayout = new LinearLayout(this);
+        rootLayout.setOrientation(LinearLayout.VERTICAL);
+
+        // 顶部操作工具栏：[📋 复制]  [🗑️ 清空]  [🔄 刷新]
+        LinearLayout toolBar = new LinearLayout(this);
+        toolBar.setOrientation(LinearLayout.HORIZONTAL);
+        toolBar.setPadding(20, 10, 20, 10);
+        toolBar.setGravity(Gravity.END);
+
+        Button btnCopy = new Button(this, null, android.R.attr.borderlessButtonStyle);
+        btnCopy.setText("📋 复制");
+        btnCopy.setTextSize(13);
+
+        Button btnClear = new Button(this, null, android.R.attr.borderlessButtonStyle);
+        btnClear.setText("🗑️ 清空");
+        btnClear.setTextSize(13);
+
+        Button btnRefresh = new Button(this, null, android.R.attr.borderlessButtonStyle);
+        btnRefresh.setText("🔄 刷新");
+        btnRefresh.setTextSize(13);
+
+        toolBar.addView(btnCopy);
+        toolBar.addView(btnClear);
+        toolBar.addView(btnRefresh);
+        rootLayout.addView(toolBar);
+
+        // 日志展示区域
+        TextView tv = new TextView(this);
+        tv.setText(TermuxMcpManager.getInstance().getRecentLogs());
+        tv.setTextSize(11);
+        tv.setTypeface(Typeface.MONOSPACE);
+        tv.setPadding(30, 10, 30, 20);
+
+        ScrollView sv = new ScrollView(this);
+        sv.addView(tv);
+        LinearLayout.LayoutParams svParams = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f);
+        rootLayout.addView(sv, svParams);
+
+        // 自动滑动至最新底部
+        sv.post(() -> sv.fullScroll(View.FOCUS_DOWN));
+
+        btnCopy.setOnClickListener(v -> {
+            String currentLogs = tv.getText().toString();
+            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null) {
+                cm.setPrimaryClip(ClipData.newPlainText("MCP Server Logs", currentLogs));
+                Toast.makeText(this, "MCP 服务日志已成功复制到系统剪贴板！", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        btnClear.setOnClickListener(v -> {
+            TermuxMcpManager.getInstance().clearLogs();
+            tv.setText("暂无 MCP 服务运行日志（已清空）");
+            Toast.makeText(this, "MCP 服务日志已清空！", Toast.LENGTH_SHORT).show();
+        });
+
+        btnRefresh.setOnClickListener(v -> {
+            tv.setText(TermuxMcpManager.getInstance().getRecentLogs());
+            sv.post(() -> sv.fullScroll(View.FOCUS_DOWN));
+            Toast.makeText(this, "日志已刷新", Toast.LENGTH_SHORT).show();
+        });
+
+        new AlertDialog.Builder(this)
+            .setTitle("Termux MCP 服务实时运行日志")
+            .setView(rootLayout)
+            .setPositiveButton("关闭", null)
             .show();
     }
 

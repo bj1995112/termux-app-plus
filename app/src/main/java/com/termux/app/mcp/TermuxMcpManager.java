@@ -9,12 +9,23 @@ import com.termux.shared.logger.Logger;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.text.SimpleDateFormat;
+import java.util.ArrayDeque;
 import java.util.Collections;
+import java.util.Date;
+import java.util.Deque;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import com.termux.shared.termux.TermuxConstants;
 
 /**
  * 终端 MCP 服务全局管理器：统一管理服务生命周期、SharedPreferences 配置、IP 探测与配置模板生成。
@@ -53,6 +64,10 @@ public class TermuxMcpManager {
     private TermuxMcpServer mServer;
     private PowerManager.WakeLock mWakeLock;
 
+    private final Deque<String> mLogBuffer = new ArrayDeque<>(200);
+    private final SimpleDateFormat mDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+    private final ExecutorService mLogFileExecutor = Executors.newSingleThreadExecutor();
+
     private TermuxMcpManager() {}
 
     public static synchronized TermuxMcpManager getInstance() {
@@ -60,6 +75,61 @@ public class TermuxMcpManager {
             sInstance = new TermuxMcpManager();
         }
         return sInstance;
+    }
+
+    /**
+     * 记录一条 MCP Server 运行日志（存入内存环形缓冲并异步持久化到 ~/mcp_server.log）
+     */
+    public synchronized void log(String level, String message) {
+        String timestamp;
+        synchronized (mDateFormat) {
+            timestamp = mDateFormat.format(new Date());
+        }
+        String entry = "[" + timestamp + "] [" + level + "] " + message;
+        if (mLogBuffer.size() >= 200) {
+            mLogBuffer.pollFirst();
+        }
+        mLogBuffer.offerLast(entry);
+
+        mLogFileExecutor.submit(() -> {
+            try {
+                File logFile = new File(TermuxConstants.TERMUX_HOME_DIR_PATH, "mcp_server.log");
+                try (FileOutputStream fos = new FileOutputStream(logFile, true)) {
+                    fos.write((entry + "\n").getBytes(StandardCharsets.UTF_8));
+                }
+            } catch (Exception ignored) {}
+        });
+    }
+
+    /**
+     * 获取最近的 MCP Server 运行日志
+     */
+    public synchronized String getRecentLogs() {
+        if (mLogBuffer.isEmpty()) {
+            return "暂无 MCP 服务运行日志";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String line : mLogBuffer) {
+            sb.append(line).append("\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 清空内存与磁盘中的 MCP 服务运行日志
+     */
+    public synchronized void clearLogs() {
+        mLogBuffer.clear();
+        mLogFileExecutor.submit(() -> {
+            try {
+                File logFile = new File(TermuxConstants.TERMUX_HOME_DIR_PATH, "mcp_server.log");
+                if (logFile.exists()) {
+                    try (FileOutputStream fos = new FileOutputStream(logFile)) {
+                        // 清空文件内容
+                    }
+                }
+            } catch (Exception ignored) {}
+        });
     }
 
     private static SharedPreferences getPrefs(Context context) {
@@ -251,9 +321,11 @@ public class TermuxMcpManager {
             }
 
             Logger.logInfo(LOG_TAG, "MCP Server successfully started on port " + port);
+            log("INFO", "MCP 服务已启动，监听端口: " + port);
             return true;
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to start MCP Server", e);
+            log("ERROR", "MCP 服务启动失败: " + e.getMessage());
             mServer = null;
             return false;
         }
@@ -276,6 +348,7 @@ public class TermuxMcpManager {
             setEnabled(context, false);
         }
         Logger.logInfo(LOG_TAG, "MCP Server stopped.");
+        log("INFO", "MCP 服务已停止");
     }
 
     public synchronized boolean restartServer(Context context) {

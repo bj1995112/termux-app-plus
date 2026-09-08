@@ -121,6 +121,7 @@ public class TermuxMcpServer {
         mThreadPool = Executors.newCachedThreadPool();
 
         Logger.logInfo(LOG_TAG, "TermuxMcpServer started on port " + mPort);
+        TermuxMcpManager.getInstance().log("INFO", "TermuxMcpServer 核心引擎启动，监听 0.0.0.0:" + mPort);
 
         Thread acceptThread = new Thread(() -> {
             while (mRunning && !mServerSocket.isClosed()) {
@@ -157,10 +158,24 @@ public class TermuxMcpServer {
         mOAuthTokens.clear();
         DeviceHardwareTools.releaseTts();
         Logger.logInfo(LOG_TAG, "TermuxMcpServer stopped.");
+        TermuxMcpManager.getInstance().log("INFO", "TermuxMcpServer 核心引擎已停止");
     }
 
     public boolean isRunning() {
         return mRunning && mServerSocket != null && !mServerSocket.isClosed();
+    }
+
+    private String getClientIp(Socket socket) {
+        if (socket == null) return "unknown";
+        try {
+            if (socket.getRemoteSocketAddress() instanceof InetSocketAddress) {
+                InetSocketAddress addr = (InetSocketAddress) socket.getRemoteSocketAddress();
+                if (addr.getAddress() != null) {
+                    return addr.getAddress().getHostAddress();
+                }
+            }
+        } catch (Exception ignored) {}
+        return "unknown";
     }
 
     /**
@@ -187,6 +202,7 @@ public class TermuxMcpServer {
      * 处理单个 HTTP 客户端请求（字节级流式解析，彻底消除 UTF-8 字符/字节长度差异导致的阻塞卡死）
      */
     private void handleClientSocket(Socket socket) {
+        String clientIp = getClientIp(socket);
         try (BufferedInputStream in = new BufferedInputStream(socket.getInputStream());
              OutputStream out = socket.getOutputStream()) {
 
@@ -325,8 +341,14 @@ public class TermuxMcpServer {
                     path.equals("/oauth/token");
 
                 if (!isPublicEndpoint && !isAuthorized(socket, headers, queryParams)) {
+                    TermuxMcpManager.getInstance().log("AUTH", "[" + clientIp + "] 401 拦截: 无效或缺失 Bearer Token (" + path + ")");
                     sendUnauthorizedResponse(out);
                     break;
+                }
+
+                // 记录非 OPTIONS 且非状态探针的业务请求
+                if (!"OPTIONS".equalsIgnoreCase(method) && !"/status".equals(path) && !"/".equals(path)) {
+                    TermuxMcpManager.getInstance().log("REQ", "[" + clientIp + "] " + method + " " + path);
                 }
 
                 // 6. 路由分发
@@ -338,17 +360,17 @@ public class TermuxMcpServer {
                     } else if ("DELETE".equalsIgnoreCase(method)) {
                         handleMcpDelete(out, headers, queryParams, keepAlive);
                     } else if ("POST".equalsIgnoreCase(method)) {
-                        handleMcpPost(body, out, headers, queryParams, path, keepAlive);
+                        handleMcpPost(body, out, headers, queryParams, path, keepAlive, clientIp);
                     } else {
                         sendJsonResponse(out, 405, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Method not allowed\"}}", null, keepAlive);
                     }
                 } else if (path.equals("/sse") && "GET".equals(method)) {
                     // 经典 SSE 订阅端点（接管长连接直到客户端断开）
-                    handleSseGet(out, socket);
+                    handleSseGet(out, socket, clientIp);
                     break;
                 } else if ((path.startsWith("/messages") || path.equals("/sse")) && "POST".equals(method)) {
                     // 经典 SSE 消息端点或直接 POST 到 /sse (支持 Streamable HTTP / MCP 双模)
-                    handleMcpPost(body, out, headers, queryParams, path, keepAlive);
+                    handleMcpPost(body, out, headers, queryParams, path, keepAlive, clientIp);
                 } else if (path.equals("/openapi.json") && "GET".equals(method)) {
                     // ChatGPT Custom GPTs Actions 专属 Schema
                     handleOpenApiSpec(headers, out);
@@ -363,9 +385,8 @@ public class TermuxMcpServer {
                     handleOAuthToken(headers, body, out);
                 } else if (path.equals("/api/execute") && "POST".equals(method)) {
                     // ChatGPT REST 命令执行端点
-                    handleRestExecute(body, out);
+                    handleRestExecute(body, out, clientIp);
                 } else if (path.equals("/api/system") && "GET".equals(method)) {
-                    // ChatGPT REST 系统状态端点
                     handleRestSystem(out);
                 } else if (path.equals("/api/clipboard")) {
                     handleRestClipboard(method, body, out);
@@ -907,7 +928,7 @@ public class TermuxMcpServer {
     /**
      * 处理 MCP JSON-RPC 2.0 请求（同时支持 Streamable HTTP POST 与 SSE 消息通道）
      */
-    private void handleMcpPost(String body, OutputStream out, Map<String, String> headers, Map<String, String> queryParams, String path, boolean keepAlive) throws IOException {
+    private void handleMcpPost(String body, OutputStream out, Map<String, String> headers, Map<String, String> queryParams, String path, boolean keepAlive, String clientIp) throws IOException {
         if (body == null || body.trim().isEmpty()) {
             sendJsonResponse(out, 400, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32700,\"message\":\"Parse error: Empty body\"}}", null, keepAlive);
             return;
@@ -917,6 +938,7 @@ public class TermuxMcpServer {
         try {
             req = new JSONObject(body);
         } catch (Exception e) {
+            TermuxMcpManager.getInstance().log("ERROR", "[" + clientIp + "] JSON 解析失败: " + e.getMessage());
             sendJsonResponse(out, 400, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32700,\"message\":\"Parse error: Invalid JSON\"}}", null, keepAlive);
             return;
         }
@@ -946,11 +968,13 @@ public class TermuxMcpServer {
         } else if (!isLegacyEndpoint) {
             // 标准 /mcp 端点严格检验会话凭据：缺失返回 400，不存在/已失效返回 404
             if (sessionId == null || sessionId.isEmpty()) {
+                TermuxMcpManager.getInstance().log("WARN", "[" + clientIp + "] 缺少 Mcp-Session-Id 请求头");
                 sendJsonResponse(out, 400, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Missing Mcp-Session-Id header\"}}", null, keepAlive);
                 return;
             }
             McpSession session = mSessions.get(sessionId);
             if (session == null) {
+                TermuxMcpManager.getInstance().log("WARN", "[" + clientIp + "] Mcp-Session-Id 未找到或已失效: " + sessionId);
                 sendJsonResponse(out, 404, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Session not found or expired\"}}", sessionId, keepAlive);
                 return;
             }
@@ -1014,6 +1038,11 @@ public class TermuxMcpServer {
                     initResult.put("serverInfo", serverInfo);
 
                     resp.put("result", initResult);
+
+                    JSONObject clientInfo = req.optJSONObject("params") != null ? req.optJSONObject("params").optJSONObject("clientInfo") : null;
+                    String clientName = clientInfo != null ? clientInfo.optString("name", "Unknown") : "Unknown";
+                    String clientVer = clientInfo != null ? clientInfo.optString("version", "") : "";
+                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] 客户端握手: " + clientName + (clientVer.isEmpty() ? "" : " v" + clientVer) + " (协议版本: " + clientVersion + ")");
                     break;
 
                 case "ping":
@@ -1025,6 +1054,7 @@ public class TermuxMcpServer {
                     break;
 
                 case "tools/list":
+                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] 客户端请求工具列表 (tools/list)");
                     JSONObject listResult = new JSONObject();
                     listResult.put("tools", ToolRegistry.getInstance().getMcpToolsDefinition(mContext));
                     resp.put("result", listResult);
@@ -1036,7 +1066,19 @@ public class TermuxMcpServer {
                     JSONObject arguments = params != null ? params.optJSONObject("arguments") : new JSONObject();
                     if (arguments == null) arguments = new JSONObject();
 
+                    String argsStr = arguments.toString();
+                    if (argsStr.length() > 80) {
+                        argsStr = argsStr.substring(0, 80) + "...";
+                    }
+                    TermuxMcpManager.getInstance().log("TOOL", "[" + clientIp + "] 调用工具 '" + toolName + "' 参数: " + argsStr);
+
+                    long startTool = System.currentTimeMillis();
                     JSONObject callResult = ToolRegistry.getInstance().executeTool(toolName, arguments, mContext);
+                    long cost = System.currentTimeMillis() - startTool;
+
+                    boolean isErr = callResult.optBoolean("isError", false);
+                    TermuxMcpManager.getInstance().log("TOOL", "[" + clientIp + "] 工具 '" + toolName + "' 执行完成 (耗时: " + cost + "ms, isError=" + isErr + ")");
+
                     resp.put("result", callResult);
                     break;
 
@@ -1063,6 +1105,7 @@ public class TermuxMcpServer {
                     err.put("code", -32601);
                     err.put("message", "Method not found: " + method);
                     resp.put("error", err);
+                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] 未知方法: " + method);
                     break;
             }
 
@@ -1087,6 +1130,7 @@ public class TermuxMcpServer {
             }
 
         } catch (Exception e) {
+            TermuxMcpManager.getInstance().log("ERROR", "[" + clientIp + "] 处理 MCP 请求异常: " + e.getMessage());
             Logger.logStackTraceWithMessage(LOG_TAG, "Error processing MCP request", e);
             sendJsonResponse(out, 500, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32603,\"message\":\"Internal error: " + e.getMessage() + "\"}}", sessionId, keepAlive);
         }
@@ -1199,10 +1243,12 @@ public class TermuxMcpServer {
     /**
      * 处理经典 SSE 长连接订阅
      */
-    private void handleSseGet(OutputStream out, Socket socket) throws IOException {
+    private void handleSseGet(OutputStream out, Socket socket, String clientIp) throws IOException {
         String sessionId = UUID.randomUUID().toString();
         mSessions.put(sessionId, new McpSession(sessionId));
         mSseSessions.put(sessionId, out);
+
+        TermuxMcpManager.getInstance().log("SSE", "[" + clientIp + "] 建立 SSE 长连接事件流 (sessionId=" + sessionId.substring(0, Math.min(8, sessionId.length())) + ")");
 
         String header = "HTTP/1.1 200 OK\r\n" +
             "Content-Type: text/event-stream\r\n" +
@@ -1229,6 +1275,7 @@ public class TermuxMcpServer {
         } catch (Exception ignored) {
         } finally {
             mSseSessions.remove(sessionId);
+            TermuxMcpManager.getInstance().log("SSE", "[" + clientIp + "] SSE 连接已断开 (sessionId=" + sessionId.substring(0, Math.min(8, sessionId.length())) + ")");
         }
     }
 
@@ -1242,13 +1289,18 @@ public class TermuxMcpServer {
         sendJsonResponse(out, 200, schema);
     }
 
-    private void handleRestExecute(String body, OutputStream out) throws IOException {
+    private void handleRestExecute(String body, OutputStream out, String clientIp) throws IOException {
         if (!ToolRegistry.getInstance().isToolAllowed("execute_command", mContext)) {
+            TermuxMcpManager.getInstance().log("REST", "[" + clientIp + "] 拒绝执行命令: execute_command 工具已被用户关闭");
             sendJsonResponse(out, 403, "{\"success\": false, \"error\": \"权限拒绝：终端执行命令工具已被用户在手机端关闭！\"}");
             return;
         }
         try {
             JSONObject req = new JSONObject(body != null && !body.isEmpty() ? body : "{}");
+            String cmd = req.optString("command", "").trim();
+            String cmdSummary = cmd.length() > 80 ? cmd.substring(0, 80) + "..." : cmd;
+            TermuxMcpManager.getInstance().log("REST", "[" + clientIp + "] REST API 执行命令: " + cmdSummary);
+
             McpTool tool = ToolRegistry.getInstance().getTool("execute_command");
             String output = (tool != null) ? tool.execute(req, mContext) : "错误：未找到 execute_command 工具";
 
