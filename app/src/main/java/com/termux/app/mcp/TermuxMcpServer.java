@@ -103,6 +103,22 @@ public class TermuxMcpServer {
         }
     }
     private final Map<String, McpSession> mSessions = new ConcurrentHashMap<>();
+    private volatile String mLatestSessionId = null;
+
+    private String getLatestActiveSessionId() {
+        if (mLatestSessionId != null && mSessions.containsKey(mLatestSessionId)) {
+            return mLatestSessionId;
+        }
+        String bestId = null;
+        long maxTime = -1;
+        for (Map.Entry<String, McpSession> entry : mSessions.entrySet()) {
+            if (entry.getValue().lastActiveAt > maxTime) {
+                maxTime = entry.getValue().lastActiveAt;
+                bestId = entry.getKey();
+            }
+        }
+        return bestId;
+    }
 
     public TermuxMcpServer(Context context, int port, String token) {
         this.mContext = context;
@@ -358,7 +374,7 @@ public class TermuxMcpServer {
                 if (path.equals("/mcp") || path.equals("/mcp/")) {
                     // 最新标准 Streamable HTTP 单端点 (2026 MCP 规范：支持 POST 消息、GET 事件流、DELETE 会话清理)
                     if ("GET".equalsIgnoreCase(method)) {
-                        handleMcpGet(out, socket, headers, queryParams);
+                        handleMcpGet(out, socket, headers, queryParams, clientIp);
                         break; // SSE 持久流接管连接
                     } else if ("DELETE".equalsIgnoreCase(method)) {
                         handleMcpDelete(out, headers, queryParams, keepAlive);
@@ -1193,20 +1209,11 @@ public class TermuxMcpServer {
                     TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] tools/list received");
                     JSONObject listResult = new JSONObject();
                     JSONArray toolsArray = ToolRegistry.getInstance().getMcpToolsDefinition(mContext);
-                    // 保底机制：若尚未加载工具或用户全部关闭，提供基础 ping 测试工具
-                    if (toolsArray == null || toolsArray.length() == 0) {
+                    if (toolsArray == null) {
                         toolsArray = new JSONArray();
-                        JSONObject pingTool = new JSONObject();
-                        pingTool.put("name", "ping");
-                        pingTool.put("description", "test tool");
-                        JSONObject schema = new JSONObject();
-                        schema.put("type", "object");
-                        pingTool.put("inputSchema", schema);
-                        toolsArray.put(pingTool);
                     }
                     listResult.put("tools", toolsArray);
                     resp.put("result", listResult);
-                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] tools/list response sent (toolsCount=" + toolsArray.length() + ")");
                     TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] tools/list response sent");
                     break;
 
@@ -1302,12 +1309,13 @@ public class TermuxMcpServer {
     /**
      * 处理 MCP Streamable HTTP GET 请求（建立持久 SSE 事件流通道）
      */
-    private void handleMcpGet(OutputStream out, Socket socket, Map<String, String> headers, Map<String, String> queryParams) throws IOException {
+    private void handleMcpGet(OutputStream out, Socket socket, Map<String, String> headers, Map<String, String> queryParams, String clientIp) throws IOException {
+        TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] SSE connection opened");
+
         String sessionId = extractSessionId(headers, queryParams, null);
         if (sessionId == null || sessionId.isEmpty()) {
-            if (!mSessions.isEmpty()) {
-                sessionId = mSessions.keySet().iterator().next();
-            } else {
+            sessionId = getLatestActiveSessionId();
+            if (sessionId == null) {
                 sessionId = UUID.randomUUID().toString();
                 mSessions.put(sessionId, new McpSession(sessionId));
             }
@@ -1319,8 +1327,10 @@ public class TermuxMcpServer {
             mSessions.put(sessionId, session);
         }
         session.lastActiveAt = System.currentTimeMillis();
+        mLatestSessionId = sessionId;
 
         mSseSessions.put(sessionId, out);
+        TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] SSE session attached: " + sessionId);
 
         StringBuilder sb = new StringBuilder();
         sb.append("HTTP/1.1 200 OK\r\n");
@@ -1339,6 +1349,15 @@ public class TermuxMcpServer {
         byte[] keepAliveBytes = ": keepalive\n\n".getBytes(StandardCharsets.UTF_8);
         String chunkHeader = Integer.toHexString(keepAliveBytes.length) + "\r\n";
 
+        // 立即发送初始 SSE 心跳帧，保证客户端立即接收到数据流就绪信号
+        synchronized (out) {
+            out.write(chunkHeader.getBytes(StandardCharsets.UTF_8));
+            out.write(keepAliveBytes);
+            out.write("\r\n".getBytes(StandardCharsets.UTF_8));
+            out.flush();
+        }
+        TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] SSE heartbeat started");
+
         try {
             while (mRunning && !socket.isClosed()) {
                 Thread.sleep(15000);
@@ -1352,6 +1371,7 @@ public class TermuxMcpServer {
         } catch (Exception ignored) {
         } finally {
             mSseSessions.remove(sessionId);
+            TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] SSE connection closed");
         }
     }
 
