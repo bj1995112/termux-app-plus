@@ -64,7 +64,7 @@ public class TermuxMcpManager {
     private TermuxMcpServer mServer;
     private PowerManager.WakeLock mWakeLock;
 
-    private final Deque<String> mLogBuffer = new ArrayDeque<>(200);
+    private final Deque<String> mLogBuffer = new ArrayDeque<>(500);
     private final SimpleDateFormat mDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
     private final ExecutorService mLogFileExecutor = Executors.newSingleThreadExecutor();
 
@@ -86,7 +86,7 @@ public class TermuxMcpManager {
             timestamp = mDateFormat.format(new Date());
         }
         String entry = "[" + timestamp + "] [" + level + "] " + message;
-        if (mLogBuffer.size() >= 200) {
+        if (mLogBuffer.size() >= 500) {
             mLogBuffer.pollFirst();
         }
         mLogBuffer.offerLast(entry);
