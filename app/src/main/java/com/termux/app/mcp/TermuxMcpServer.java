@@ -216,6 +216,9 @@ public class TermuxMcpServer {
                 String requestLine;
                 try {
                     requestLine = readHttpLine(in);
+                    while (requestLine != null && requestLine.isEmpty()) {
+                        requestLine = readHttpLine(in);
+                    }
                 } catch (SocketTimeoutException | SocketException e) {
                     break; // 超时或客户端正常关闭连接
                 }
@@ -997,44 +1000,35 @@ public class TermuxMcpServer {
         boolean isLegacyEndpoint = (path != null && (path.startsWith("/messages") || path.equals("/sse")));
         boolean isInitialize = "initialize".equals(method) || "server/discover".equals(method);
 
-        // 2. 会话状态机与严格校验（符合 MCP Streamable HTTP 规范）
+        // 2. 会话状态机与严格校验（符合 MCP Streamable HTTP 与 2026 无状态 MCP 规范）
         if (isInitialize) {
-            // initialize 统一分配或确认全局 Mcp-Session-Id
-            // 若客户端已自带 session_id（如 OpenAI Tunnel Dispatcher 分配的 session_id），直接采纳绑定！
+            // initialize / discover 统一分配或确认全局 Mcp-Session-Id
             if (sessionId == null || sessionId.isEmpty()) {
                 sessionId = UUID.randomUUID().toString();
             }
             mSessions.put(sessionId, new McpSession(sessionId));
-            TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] initialize session bound: " + sessionId);
+            TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] " + method + " session bound: " + sessionId);
         } else if (!isLegacyEndpoint) {
             // 标准 /mcp 端点检验会话凭据
             if (sessionId == null || sessionId.isEmpty()) {
-                // 单会话宽容降级：如果当前只有唯一一个活跃 session，自动绑定
-                if (mSessions.size() == 1) {
+                // 单会话宽容降级：若有活跃会话，自动复用
+                if (!mSessions.isEmpty()) {
                     sessionId = mSessions.keySet().iterator().next();
-                    TermuxMcpManager.getInstance().log("WARN", "[" + clientIp + "] 客户端未显式提供 Mcp-Session-Id，自动绑定唯一活跃会话: " + sessionId);
+                    TermuxMcpManager.getInstance().log("WARN", "[" + clientIp + "] 客户端未显式提供 Mcp-Session-Id，自动绑定活跃会话: " + sessionId);
                 } else {
-                    TermuxMcpManager.getInstance().log("ERROR", "[" + clientIp + "] [MCP ERROR] 缺少 Mcp-Session-Id 请求头且无唯一活跃会话");
-                    sendJsonResponse(out, 400, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Missing Mcp-Session-Id header\"}}", null, keepAlive);
-                    return;
+                    // 无状态 MCP（2026 规范工具直调）：自适应动态生成会话，坚决不因缺少 Session Header 拒绝请求
+                    sessionId = UUID.randomUUID().toString();
+                    mSessions.put(sessionId, new McpSession(sessionId));
+                    TermuxMcpManager.getInstance().log("INFO", "[" + clientIp + "] 无状态 MCP 请求，自动分配自适应会话: " + sessionId);
                 }
             }
             McpSession session = mSessions.get(sessionId);
             if (session == null) {
-                // 如果会话在集合中找不到，但目前刚好只有一个活跃会话，宽容重定向到该会话
-                if (mSessions.size() == 1) {
-                    sessionId = mSessions.keySet().iterator().next();
-                    session = mSessions.get(sessionId);
-                    TermuxMcpManager.getInstance().log("WARN", "[" + clientIp + "] Mcp-Session-Id 不匹配，降级复用唯一活跃会话: " + sessionId);
-                } else {
-                    TermuxMcpManager.getInstance().log("ERROR", "[" + clientIp + "] [MCP ERROR] Mcp-Session-Id 未找到或已失效: " + sessionId);
-                    sendJsonResponse(out, 404, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Session not found or expired\"}}", sessionId, keepAlive);
-                    return;
-                }
+                // 会话已过期或外部未知 session_id：直接激活，杜绝 404
+                session = new McpSession(sessionId);
+                mSessions.put(sessionId, session);
             }
-            if (session != null) {
-                session.lastActiveAt = System.currentTimeMillis();
-            }
+            session.lastActiveAt = System.currentTimeMillis();
         } else {
             // 经典 /messages 或 /sse 端点兼容
             if (sessionId != null && !sessionId.isEmpty()) {
@@ -1069,49 +1063,101 @@ public class TermuxMcpServer {
             resp.put("jsonrpc", "2.0");
             resp.put("id", id != null ? id : JSONObject.NULL);
 
+            // 提取协议版本（优先使用客户端发来的协议版本如 2026-07-28）
+            String protocolVersion = "2024-11-05";
+            JSONObject p = req.optJSONObject("params");
+            JSONObject meta = (p != null) ? p.optJSONObject("_meta") : null;
+            if (p != null && p.has("protocolVersion") && !p.optString("protocolVersion").isEmpty()) {
+                protocolVersion = p.optString("protocolVersion");
+            } else if (meta != null && meta.has("io.modelcontextprotocol/protocolVersion")) {
+                protocolVersion = meta.optString("io.modelcontextprotocol/protocolVersion");
+            } else if (headers != null && headers.containsKey("mcp-protocol-version")) {
+                protocolVersion = headers.get("mcp-protocol-version");
+            }
+
+            // 修复客户端识别 Unknown 问题（多字段及 2026 规范 _meta 命名空间深度容错读取）
+            JSONObject clientInfo = null;
+            if (p != null) {
+                clientInfo = p.optJSONObject("clientInfo");
+            }
+            if (clientInfo == null && meta != null) {
+                clientInfo = meta.optJSONObject("io.modelcontextprotocol/clientInfo");
+            }
+            if (clientInfo == null && req.has("clientInfo")) {
+                clientInfo = req.optJSONObject("clientInfo");
+            }
+
+            String clientName = "Unknown";
+            String clientVer = "";
+            if (clientInfo != null) {
+                if (clientInfo.has("name") && !clientInfo.optString("name").isEmpty()) {
+                    clientName = clientInfo.optString("name");
+                } else if (clientInfo.has("title") && !clientInfo.optString("title").isEmpty()) {
+                    clientName = clientInfo.optString("title");
+                } else if (clientInfo.has("id") && !clientInfo.optString("id").isEmpty()) {
+                    clientName = clientInfo.optString("id");
+                }
+                clientVer = clientInfo.optString("version", "");
+            }
+
             switch (method) {
-                case "server/discover":
-                case "initialize":
-                    // 提取协议版本（优先使用客户端发来的协议版本如 2026-07-28）
-                    String protocolVersion = "2024-11-05";
-                    if (req.optJSONObject("params") != null) {
-                        JSONObject p = req.optJSONObject("params");
-                        if (p.has("protocolVersion") && !p.optString("protocolVersion").isEmpty()) {
-                            protocolVersion = p.optString("protocolVersion");
-                        } else if (p.has("_meta")) {
-                            JSONObject meta = p.optJSONObject("_meta");
-                            if (meta != null && meta.has("io.modelcontextprotocol/protocolVersion")) {
-                                protocolVersion = meta.optString("io.modelcontextprotocol/protocolVersion");
-                            }
-                        }
-                    }
+                case "server/discover": {
+                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] server/discover received (client=" + clientName + (clientVer.isEmpty() ? "" : " v" + clientVer) + ", protocol=" + protocolVersion + ")");
 
-                    // 修复客户端识别 Unknown 问题（多字段容错读取）
-                    JSONObject clientInfo = null;
-                    if (req.optJSONObject("params") != null) {
-                        clientInfo = req.optJSONObject("params").optJSONObject("clientInfo");
-                    }
-                    if (clientInfo == null && req.has("clientInfo")) {
-                        clientInfo = req.optJSONObject("clientInfo");
-                    }
+                    JSONObject discResult = new JSONObject();
 
-                    String clientName = "Unknown";
-                    String clientVer = "";
-                    if (clientInfo != null) {
-                        if (clientInfo.has("name") && !clientInfo.optString("name").isEmpty()) {
-                            clientName = clientInfo.optString("name");
-                        } else if (clientInfo.has("title") && !clientInfo.optString("title").isEmpty()) {
-                            clientName = clientInfo.optString("title");
-                        } else if (clientInfo.has("id") && !clientInfo.optString("id").isEmpty()) {
-                            clientName = clientInfo.optString("id");
-                        }
-                        clientVer = clientInfo.optString("version", "");
-                    }
+                    // 1. 支持协议版本列表（MCP 2026-07-28 规范必填 supportedVersions: string[]）
+                    JSONArray supportedVersions = new JSONArray();
+                    supportedVersions.put("2026-07-28");
+                    supportedVersions.put("2025-06-18");
+                    supportedVersions.put("2024-11-05");
+                    discResult.put("supportedVersions", supportedVersions);
 
+                    // 兼容旧版客户端可能检查的 protocolVersion 单值
+                    discResult.put("protocolVersion", protocolVersion);
+
+                    // 2. Capabilities 能力声明
+                    JSONObject capabilities = new JSONObject();
+                    JSONObject toolsCap = new JSONObject();
+                    toolsCap.put("listChanged", true);
+                    capabilities.put("tools", toolsCap);
+                    capabilities.put("resources", new JSONObject());
+                    capabilities.put("prompts", new JSONObject());
+                    discResult.put("capabilities", capabilities);
+
+                    // 3. 描述指引 instructions
+                    discResult.put("instructions", "Termux+ MCP Server providing terminal execution and Android device features.");
+
+                    // 4. 服务端信息（同时挂载在根属性与 _meta 命名空间中，100% 满足 Go-SDK / Python-SDK 规范）
+                    JSONObject serverInfo = new JSONObject();
+                    serverInfo.put("name", "Termux+ Built-in MCP Server");
+                    serverInfo.put("version", "1.0");
+                    discResult.put("serverInfo", serverInfo);
+
+                    JSONObject discMeta = new JSONObject();
+                    discMeta.put("io.modelcontextprotocol/serverInfo", serverInfo);
+                    discResult.put("_meta", discMeta);
+
+                    // 5. 缓存控制（CacheableResult）
+                    discResult.put("ttlMs", 3600000);
+                    discResult.put("cacheScope", "public");
+
+                    resp.put("result", discResult);
+                    TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] server/discover response sent (status=200, supportedVersions=[2026-07-28, 2025-06-18, 2024-11-05])");
+                    break;
+                }
+
+                case "initialize": {
                     TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] initialize received (client=" + clientName + (clientVer.isEmpty() ? "" : " v" + clientVer) + ", protocol=" + protocolVersion + ")");
 
                     JSONObject initResult = new JSONObject();
                     initResult.put("protocolVersion", protocolVersion);
+
+                    JSONArray initSupportedVersions = new JSONArray();
+                    initSupportedVersions.put("2026-07-28");
+                    initSupportedVersions.put("2025-06-18");
+                    initSupportedVersions.put("2024-11-05");
+                    initResult.put("supportedVersions", initSupportedVersions);
 
                     JSONObject capabilities = new JSONObject();
                     JSONObject toolsCap = new JSONObject();
@@ -1124,9 +1170,14 @@ public class TermuxMcpServer {
                     serverInfo.put("version", "1.0");
                     initResult.put("serverInfo", serverInfo);
 
+                    JSONObject initMeta = new JSONObject();
+                    initMeta.put("io.modelcontextprotocol/serverInfo", serverInfo);
+                    initResult.put("_meta", initMeta);
+
                     resp.put("result", initResult);
                     TermuxMcpManager.getInstance().log("MCP", "[" + clientIp + "] [MCP] initialize response sent (status=200, protocol=" + protocolVersion + ")");
                     break;
+                }
 
                 case "ping":
                     resp.put("result", new JSONObject());
@@ -1232,23 +1283,20 @@ public class TermuxMcpServer {
      * 处理 MCP Streamable HTTP GET 请求（建立持久 SSE 事件流通道）
      */
     private void handleMcpGet(OutputStream out, Socket socket, Map<String, String> headers, Map<String, String> queryParams) throws IOException {
-        String sessionId = headers != null ? headers.get("mcp-session-id") : null;
-        if ((sessionId == null || sessionId.isEmpty()) && queryParams != null) {
-            sessionId = queryParams.get("sessionId");
-            if (sessionId == null || sessionId.isEmpty()) {
-                sessionId = queryParams.get("mcp-session-id");
-            }
-        }
-
+        String sessionId = extractSessionId(headers, queryParams, null);
         if (sessionId == null || sessionId.isEmpty()) {
-            sendJsonResponse(out, 400, "{\"error\": \"Missing Mcp-Session-Id header for SSE stream\"}", null, false);
-            return;
+            if (!mSessions.isEmpty()) {
+                sessionId = mSessions.keySet().iterator().next();
+            } else {
+                sessionId = UUID.randomUUID().toString();
+                mSessions.put(sessionId, new McpSession(sessionId));
+            }
         }
 
         McpSession session = mSessions.get(sessionId);
         if (session == null) {
-            sendJsonResponse(out, 404, "{\"error\": \"Session not found or expired\"}", sessionId, false);
-            return;
+            session = new McpSession(sessionId);
+            mSessions.put(sessionId, session);
         }
         session.lastActiveAt = System.currentTimeMillis();
 
@@ -1291,27 +1339,11 @@ public class TermuxMcpServer {
      * 处理 MCP Streamable HTTP DELETE 请求（客户端主动清理关闭会话）
      */
     private void handleMcpDelete(OutputStream out, Map<String, String> headers, Map<String, String> queryParams, boolean keepAlive) throws IOException {
-        String sessionId = headers != null ? headers.get("mcp-session-id") : null;
-        if ((sessionId == null || sessionId.isEmpty()) && queryParams != null) {
-            sessionId = queryParams.get("sessionId");
-            if (sessionId == null || sessionId.isEmpty()) {
-                sessionId = queryParams.get("mcp-session-id");
-            }
+        String sessionId = extractSessionId(headers, queryParams, null);
+        if (sessionId != null && !sessionId.isEmpty()) {
+            mSessions.remove(sessionId);
+            mSseSessions.remove(sessionId);
         }
-
-        if (sessionId == null || sessionId.isEmpty()) {
-            sendJsonResponse(out, 400, "{\"error\": \"Missing Mcp-Session-Id header\"}", null, keepAlive);
-            return;
-        }
-
-        McpSession session = mSessions.remove(sessionId);
-        mSseSessions.remove(sessionId);
-
-        if (session == null) {
-            sendJsonResponse(out, 404, "{\"error\": \"Session not found or already closed\"}", sessionId, keepAlive);
-            return;
-        }
-
         sendEmptyResponse(out, 204, sessionId, keepAlive);
     }
 
