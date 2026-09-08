@@ -756,7 +756,7 @@ public class TermuxMcpActivity extends AppCompatActivity {
         proxyTextCol.addView(tvProxyLabel);
 
         TextView tvProxyHint = new TextView(this);
-        tvProxyHint.setText("已开启智能嗅探：推荐留空，App 将自动适配本机 v2rayNG / Clash，无需配置");
+        tvProxyHint.setText("已开启智能中继：推荐留空，自动自适应匹配 Clash/v2rayNG/sing-box 等任意代理及端口");
         tvProxyHint.setTextSize(12);
         tvProxyHint.setTextColor(mTextColorSecondary);
         proxyTextCol.addView(tvProxyHint);
@@ -1356,12 +1356,12 @@ public class TermuxMcpActivity extends AppCompatActivity {
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         String curr = manager.getProxy(this);
         input.setText(curr);
-        input.setHint("推荐留空自动检测（如 v2rayNG:10808, Clash:7890）");
+        input.setHint("推荐留空自动检测（支持 7890, 10808, 2080 或自定义端口）");
         input.setSelectAllOnFocus(true);
 
         new AlertDialog.Builder(this)
-            .setTitle("前置代理 (推荐留空自动检测)")
-            .setMessage("手机已运行 v2rayNG 或 Clash 时，保持留空即可，App 将自动完成对接。\n\n如需指定特殊端口，可填入（如 socks5://127.0.0.1:10808 或 http://127.0.0.1:7890）：")
+            .setTitle("前置代理 (推荐留空自动检测与自愈)")
+            .setMessage("手机已运行 Clash、v2rayNG、sing-box 或开启 VPN 时，保持留空即可，内置智能代理网关将自动自适应匹配当前工作的端口与协议，频繁切换代理软件无需手动修改。\n\n如需强制指定端口，可填入（如 10808、7890、socks5://127.0.0.1:10808 或 http://127.0.0.1:7890）：")
             .setView(input)
             .setPositiveButton(android.R.string.ok, (dialog, which) -> {
                 String val = input.getText().toString().trim();

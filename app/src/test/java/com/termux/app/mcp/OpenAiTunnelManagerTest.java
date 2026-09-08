@@ -270,4 +270,159 @@ public class OpenAiTunnelManagerTest {
         manager.clearLogs();
         Assert.assertEquals("暂无隧道运行日志", manager.getRecentLogs());
     }
+
+    @Test
+    public void testParseAndProbeProxyFormats() {
+        // 验证各种用户输入格式的正确解析
+        OpenAiTunnelManager.ProxyInfo pi1 = OpenAiTunnelManager.parseAndProbeProxy("10808");
+        Assert.assertNotNull(pi1);
+        Assert.assertEquals(10808, pi1.port);
+        Assert.assertEquals("127.0.0.1", pi1.host);
+
+        OpenAiTunnelManager.ProxyInfo pi2 = OpenAiTunnelManager.parseAndProbeProxy("http://127.0.0.1:7890");
+        Assert.assertNotNull(pi2);
+        Assert.assertEquals(7890, pi2.port);
+        Assert.assertEquals("http", pi2.scheme);
+
+        OpenAiTunnelManager.ProxyInfo pi3 = OpenAiTunnelManager.parseAndProbeProxy("socks5://127.0.0.1:10808");
+        Assert.assertNotNull(pi3);
+        Assert.assertEquals(10808, pi3.port);
+        Assert.assertEquals("socks5", pi3.scheme);
+
+        Assert.assertNull(OpenAiTunnelManager.parseAndProbeProxy(""));
+        Assert.assertNull(OpenAiTunnelManager.parseAndProbeProxy(null));
+    }
+
+    @Test
+    public void testSmartLocalProxyGatewayFailover() throws Exception {
+        // 1. 模拟上游 HTTP 代理服务 A
+        ServerSocket httpMock = new ServerSocket(0);
+        int httpPort = httpMock.getLocalPort();
+        System.setProperty("http.proxyHost", "127.0.0.1");
+        System.setProperty("http.proxyPort", String.valueOf(httpPort));
+
+        Thread httpWorker = new Thread(() -> {
+            try {
+                while (!httpMock.isClosed()) {
+                    Socket s = httpMock.accept();
+                    InputStream in = s.getInputStream();
+                    OutputStream out = s.getOutputStream();
+                    byte[] buf = new byte[1024];
+                    int n = in.read(buf);
+                    if (n > 0) {
+                        out.write("HTTP/1.1 200 Connection Established\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+                        out.flush();
+                        // echo
+                        int len = in.read(buf);
+                        if (len > 0) {
+                            out.write(buf, 0, len);
+                            out.flush();
+                        }
+                    }
+                    s.close();
+                }
+            } catch (Exception ignored) {}
+        });
+        httpWorker.start();
+
+        // 启动网关
+        OpenAiTunnelManager.SmartLocalProxyGateway gateway = new OpenAiTunnelManager.SmartLocalProxyGateway(null);
+        int gwPort = gateway.start();
+        Assert.assertTrue("Gateway dynamic port should be > 0", gwPort > 0);
+
+        // 客户端发请求给网关，验证连通上游 A
+        Socket c1 = new Socket("127.0.0.1", gwPort);
+        c1.getOutputStream().write("CONNECT api.openai.com:443 HTTP/1.1\r\nHost: api.openai.com:443\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+        c1.getOutputStream().flush();
+        byte[] resp1 = new byte[512];
+        int r1 = c1.getInputStream().read(resp1);
+        Assert.assertTrue(new String(resp1, 0, r1, StandardCharsets.US_ASCII).contains("200 Connection Established"));
+        c1.close();
+
+        // 2. 模拟切换代理：关闭上游 A，开启上游 SOCKS5 服务 B
+        httpMock.close();
+        System.clearProperty("http.proxyHost");
+        System.clearProperty("http.proxyPort");
+
+        ServerSocket socksMock = new ServerSocket(0);
+        int socksPort = socksMock.getLocalPort();
+        System.setProperty("socksProxyHost", "127.0.0.1");
+        System.setProperty("socksProxyPort", String.valueOf(socksPort));
+
+        Thread socksWorker = new Thread(() -> {
+            while (!socksMock.isClosed()) {
+                try {
+                    Socket s = socksMock.accept();
+                    new Thread(() -> {
+                        try {
+                            InputStream in = s.getInputStream();
+                            OutputStream out = s.getOutputStream();
+
+                            // SOCKS5 握手
+                            int v = in.read();
+                            if (v != 0x05) { s.close(); return; }
+                            int nm = in.read();
+                            if (nm > 0) {
+                                byte[] m = new byte[nm];
+                                in.read(m);
+                            }
+                            out.write(new byte[]{0x05, 0x00});
+                            out.flush();
+
+                            // SOCKS5 CONNECT
+                            byte[] cmdHead = new byte[4];
+                            int r = in.read(cmdHead);
+                            if (r < 4) { s.close(); return; }
+                            if (cmdHead[3] == 0x03) {
+                                int dlen = in.read();
+                                if (dlen > 0) {
+                                    byte[] domainBytes = new byte[dlen];
+                                    in.read(domainBytes);
+                                }
+                            } else if (cmdHead[3] == 0x01) {
+                                byte[] ipBytes = new byte[4];
+                                in.read(ipBytes);
+                            }
+                            in.read(); in.read(); // port
+                            out.write(new byte[]{0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 1, (byte) 187});
+                            out.flush();
+
+                            // echo
+                            byte[] buf = new byte[256];
+                            int len = in.read(buf);
+                            if (len > 0) {
+                                out.write(buf, 0, len);
+                                out.flush();
+                            }
+                            s.close();
+                        } catch (Exception ignored) {
+                            try { s.close(); } catch (Exception e) {}
+                        }
+                    }).start();
+                } catch (Exception ignored) {}
+            }
+        });
+        socksWorker.start();
+
+        // 客户端再次发请求给网关，网关应自动识别上游 A 已死，毫秒级故障转移至上游 B！
+        Socket c2 = new Socket("127.0.0.1", gwPort);
+        c2.getOutputStream().write("CONNECT api.openai.com:443 HTTP/1.1\r\nHost: api.openai.com:443\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+        c2.getOutputStream().flush();
+        byte[] resp2 = new byte[512];
+        int r2 = c2.getInputStream().read(resp2);
+        Assert.assertTrue(new String(resp2, 0, r2, StandardCharsets.US_ASCII).contains("200 Connection Established"));
+
+        // 发送数据测试回显
+        c2.getOutputStream().write("HELLO_FAILOVER".getBytes(StandardCharsets.UTF_8));
+        c2.getOutputStream().flush();
+        byte[] echoBuf = new byte[128];
+        int echoLen = c2.getInputStream().read(echoBuf);
+        Assert.assertEquals("HELLO_FAILOVER", new String(echoBuf, 0, echoLen, StandardCharsets.UTF_8));
+
+        c2.close();
+        gateway.stop();
+        socksMock.close();
+        System.clearProperty("socksProxyHost");
+        System.clearProperty("socksProxyPort");
+    }
 }
