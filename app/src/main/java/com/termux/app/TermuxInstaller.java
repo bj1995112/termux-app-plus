@@ -260,8 +260,8 @@ final class TermuxInstaller {
 
                     // Recreate env file since termux prefix was wiped earlier
                     TermuxShellEnvironment.writeEnvironmentToFile(activity);
-                    // 全新安装默认静默登录横幅：创建 ~/.hushlogin（删除该文件即可恢复横幅）
-                    createHushLoginFile();
+                    // 注：不再写入自定义中文 motd 横幅，保持与官方 Termux 一致的启动行为；
+                    // 如需自定义欢迎语，用户可在 ~/.termux/motd.sh 中自行定义（login 脚本会优先执行该文件）。
 
                     activity.runOnUiThread(whenDone);
 
@@ -460,23 +460,5 @@ final class TermuxInstaller {
     }
 
     public static native byte[] getZip();
-
-    /** 创建 ~/.hushlogin，使全新安装默认不显示登录横幅（用户删除该文件即可恢复）。 */
-    private static void createHushLoginFile() {
-        try {
-            File homeDir = new File(TermuxConstants.TERMUX_HOME_DIR_PATH);
-            if (!homeDir.exists()) {
-                //noinspection ResultOfMethodCallIgnored
-                homeDir.mkdirs();
-            }
-            File hushLoginFile = new File(homeDir, ".hushlogin");
-            if (!hushLoginFile.exists()) {
-                //noinspection ResultOfMethodCallIgnored
-                hushLoginFile.createNewFile();
-            }
-        } catch (Exception e) {
-            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to create .hushlogin", e);
-        }
-    }
 
 }
