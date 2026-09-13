@@ -1546,7 +1546,7 @@ public class OpenAiTunnelManager {
 
     private void onNetworkChanged(String reason) {
         mThreadPool.execute(() -> {
-            appendLog("[Termux+] 📶 感知到网络状态变更 (" + reason + "），刷新代理中继缓存...");
+            appendLog("[Termux+] 📶 感知到网络状态变更 (" + reason + ")，刷新代理中继缓存...");
             if (mProxyGateway != null) {
                 mProxyGateway.invalidateCache();
             }
