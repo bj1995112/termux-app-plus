@@ -1,5 +1,7 @@
 package com.termux.app.styling;
 
+import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
@@ -19,6 +21,7 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.content.res.AppCompatResources;
 
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.button.MaterialButton;
@@ -91,6 +94,51 @@ public class TermuxStyleActivity extends AppCompatActivity {
         if (buttonReset != null) buttonReset.setOnClickListener(v -> showResetDialog());
     }
 
+    /**
+     * 安全解析主题颜色属性。
+     *
+     * <p>原实现直接使用 {@code TypedValue.data}，但当 {@code android:textColorPrimary} 等属性
+     * 解析为 ColorStateList 资源引用时，{@code tv.data} 保存的是资源 ID 而非颜色值，
+     * 直接当作 ARGB 使用会得到一个近似"半透明近黑"的颜色，在深色背景上不可见。
+     * 此处先判断类型，必要时通过 ColorStateList 解析出默认色，确保深浅色模式下均正确。</p>
+     */
+    private int resolveThemeColor(int attrResId, int fallbackColor) {
+        TypedValue tv = new TypedValue();
+        if (getTheme().resolveAttribute(attrResId, tv, true)) {
+            if (tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
+                    && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
+                return tv.data;
+            }
+            if (tv.resourceId != 0) {
+                try {
+                    ColorStateList csl = AppCompatResources.getColorStateList(this, tv.resourceId);
+                    if (csl != null) {
+                        return csl.getDefaultColor();
+                    }
+                } catch (Exception ignored) {
+                    // 解析失败则退回默认值
+                }
+            }
+        }
+        return fallbackColor;
+    }
+
+    /** 当前是否为系统深色模式。 */
+    private boolean isNightMode() {
+        return (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                == Configuration.UI_MODE_NIGHT_YES;
+    }
+
+    /** 解析主文本色（含深色模式兜底）。 */
+    private int resolveTextColorPrimary() {
+        return resolveThemeColor(android.R.attr.textColorPrimary, isNightMode() ? 0xFFECECEC : 0xFF212121);
+    }
+
+    /** 解析次级文本色（含深色模式兜底）。 */
+    private int resolveTextColorSecondary() {
+        return resolveThemeColor(android.R.attr.textColorSecondary, isNightMode() ? 0xFFB0B0B0 : 0xFF757575);
+    }
+
     private void updateCurrentState() {
         // 1. 动态联动终端当前配色方案
         int[] terminalColors = TermuxStyleManager.getTerminalCurrentColors(this);
@@ -153,13 +201,8 @@ public class TermuxStyleActivity extends AppCompatActivity {
         TermuxStyleManager.sortItemsWithFavorites(mColorSchemes, favColors);
 
         // 动态读取系统主题颜色，确保在日间模式（白底）与夜间模式（深底）下均拥有最佳对比度
-        TypedValue tvPrimary = new TypedValue();
-        getTheme().resolveAttribute(android.R.attr.textColorPrimary, tvPrimary, true);
-        final int textColorPrimary = tvPrimary.data != 0 ? tvPrimary.data : 0xFF212121;
-
-        TypedValue tvSecondary = new TypedValue();
-        getTheme().resolveAttribute(android.R.attr.textColorSecondary, tvSecondary, true);
-        final int textColorSecondary = tvSecondary.data != 0 ? tvSecondary.data : 0xFF757575;
+        final int textColorPrimary = resolveTextColorPrimary();
+        final int textColorSecondary = resolveTextColorSecondary();
 
         TypedValue tvRipple = new TypedValue();
         getTheme().resolveAttribute(android.R.attr.selectableItemBackground, tvRipple, true);
@@ -312,13 +355,8 @@ public class TermuxStyleActivity extends AppCompatActivity {
         TermuxStyleManager.sortItemsWithFavorites(mFonts, favFonts);
 
         // 动态读取系统主题颜色，确保在日间模式（白底）与夜间模式（深底）下均拥有最佳对比度
-        TypedValue tvPrimary = new TypedValue();
-        getTheme().resolveAttribute(android.R.attr.textColorPrimary, tvPrimary, true);
-        final int textColorPrimary = tvPrimary.data != 0 ? tvPrimary.data : 0xFF212121;
-
-        TypedValue tvSecondary = new TypedValue();
-        getTheme().resolveAttribute(android.R.attr.textColorSecondary, tvSecondary, true);
-        final int textColorSecondary = tvSecondary.data != 0 ? tvSecondary.data : 0xFF757575;
+        final int textColorPrimary = resolveTextColorPrimary();
+        final int textColorSecondary = resolveTextColorSecondary();
 
         TypedValue tvRipple = new TypedValue();
         getTheme().resolveAttribute(android.R.attr.selectableItemBackground, tvRipple, true);
@@ -482,13 +520,8 @@ public class TermuxStyleActivity extends AppCompatActivity {
             TermuxPromptManager.getColorById(initColorId)
         };
 
-        TypedValue tvPrimary = new TypedValue();
-        getTheme().resolveAttribute(android.R.attr.textColorPrimary, tvPrimary, true);
-        final int textColorPrimary = tvPrimary.data != 0 ? tvPrimary.data : 0xFF212121;
-
-        TypedValue tvSecondary = new TypedValue();
-        getTheme().resolveAttribute(android.R.attr.textColorSecondary, tvSecondary, true);
-        final int textColorSecondary = tvSecondary.data != 0 ? tvSecondary.data : 0xFF757575;
+        final int textColorPrimary = resolveTextColorPrimary();
+        final int textColorSecondary = resolveTextColorSecondary();
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
