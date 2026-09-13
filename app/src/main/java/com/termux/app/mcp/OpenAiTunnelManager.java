@@ -15,6 +15,7 @@ import android.util.Base64;
 import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.TermuxConstants;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
@@ -49,7 +50,7 @@ import javax.net.ssl.X509TrustManager;
 
 /**
  * OpenAI 官方原生 Secure MCP Tunnel (openai/tunnel-client) 独立管理器：
- * 1. 自动从 assets/bin 解压并赋予可执行权限 (+x)；
+ * 1. 自动从 assets/bin 释放并赋予可执行权限 (+x)；
  * 2. 自动导出/注入 Android 根证书 Bundle (解决 x509 unknown authority)；
  * 3. 内置智能动态多协议代理中继网关 (SmartLocalProxyGateway)，自适应匹配当前工作的代理端口（Clash/v2rayNG/sing-box/SS 等）；
  * 4. 毫秒级故障转移（Failover）：无论用户频繁切换代理软件、更改端口，均能自动重探并无缝重连；
@@ -665,6 +666,9 @@ public class OpenAiTunnelManager {
 
     private StateListener mListener;
 
+    /** 二进制合理性下限：低于该大小视为半包/占位文件（tunnel-client 实际约 19MB） */
+    private static final long MIN_BINARY_SIZE_BYTES = 1_000_000L;
+
     private OpenAiTunnelManager() {}
 
     public static OpenAiTunnelManager getInstance() {
@@ -762,7 +766,12 @@ public class OpenAiTunnelManager {
     }
 
     /**
-     * 自动解压并安装二进制到 Termux bin 目录
+     * 自动释放并安装二进制到 Termux bin 目录。
+     *
+     * 兼容两种打包形态：
+     * - assets/bin/<name>.gz  （仓库当前形态，GZIP 压缩）
+     * - assets/bin/<name>     （裸 ELF 形态，部分构建链路会解包压缩资产）
+     * 通过读取魔数（1f 8b）自动判定是否需要解压，两种形态均可正确释放。
      */
     public synchronized boolean ensureBinariesInstalled(Context context) {
         File binDir = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH);
@@ -772,35 +781,90 @@ public class OpenAiTunnelManager {
         File cloudflared = new File(binDir, "cloudflared");
 
         boolean ok = true;
-        if (!tunnelClient.exists() || tunnelClient.length() == 0) {
-            ok = extractAssetGzip(context, "bin/tunnel-client.gz", tunnelClient);
+        if (!tunnelClient.exists() || tunnelClient.length() < MIN_BINARY_SIZE_BYTES) {
+            ok = releaseAssetBinary(context, "tunnel-client", tunnelClient);
+            if (!ok) {
+                Logger.logError(LOG_TAG, "Failed to release tunnel-client to " + tunnelClient.getAbsolutePath());
+            }
         }
-        if (ok && (!cloudflared.exists() || cloudflared.length() == 0)) {
-            extractAssetGzip(context, "bin/cloudflared.gz", cloudflared);
+        if (ok && (!cloudflared.exists() || cloudflared.length() < MIN_BINARY_SIZE_BYTES)) {
+            if (!releaseAssetBinary(context, "cloudflared", cloudflared)) {
+                // cloudflared 为可选的备用穿透组件，释放失败不阻断 tunnel-client 主链路
+                Logger.logError(LOG_TAG, "Failed to release cloudflared to " + cloudflared.getAbsolutePath());
+            }
         }
 
         if (tunnelClient.exists()) tunnelClient.setExecutable(true, false);
         if (cloudflared.exists()) cloudflared.setExecutable(true, false);
 
-        return ok && tunnelClient.exists();
+        return ok && tunnelClient.exists() && tunnelClient.length() >= MIN_BINARY_SIZE_BYTES;
     }
 
-    private boolean extractAssetGzip(Context context, String assetPath, File destFile) {
-        try (InputStream is = context.getAssets().open(assetPath);
-             GZIPInputStream gzis = new GZIPInputStream(is);
-             FileOutputStream fos = new FileOutputStream(destFile)) {
-
-            byte[] buffer = new byte[8192];
-            int len;
-            while ((len = gzis.read(buffer)) > 0) {
-                fos.write(buffer, 0, len);
+    /**
+     * 自适应释放 assets/bin 下的二进制文件：
+     * 1. 优先尝试 <name>.gz，失败回退裸文件 <name>；
+     * 2. 按魔数（1f 8b）自动判定 GZIP 还是裸流；
+     * 3. 完成后做大小合理性校验并落盘可执行权限。
+     * 该实现兼容两种构建链路，避免「代码找 .gz、APK 里却是裸文件」造成的释放失败。
+     */
+    private boolean releaseAssetBinary(Context context, String name, File destFile) {
+        InputStream is = null;
+        File tmpFile = new File(destFile.getAbsolutePath() + ".tmp");
+        try {
+            // 1) 先试 .gz（仓库现状），失败回退裸文件（部分 APK 实际形态）
+            try {
+                is = context.getAssets().open("bin/" + name + ".gz");
+            } catch (IOException e) {
+                is = context.getAssets().open("bin/" + name);
             }
-            fos.flush();
+            is = new BufferedInputStream(is);
+            is.mark(4);
+            int b1 = is.read();
+            int b2 = is.read();
+            is.reset();
+            // 2) GZIP 魔数 1f 8b 自适应解压，否则按裸流拷贝
+            InputStream in = (b1 == 0x1F && b2 == 0x8B) ? new GZIPInputStream(is) : is;
+
+            // 3) 先写入临时文件，成功后原子替换，避免产生半包文件
+            try (FileOutputStream fos = new FileOutputStream(tmpFile)) {
+                byte[] buffer = new byte[8192];
+                int len;
+                while ((len = in.read(buffer)) > 0) {
+                    fos.write(buffer, 0, len);
+                }
+                fos.flush();
+            }
+
+            if (tmpFile.length() < MIN_BINARY_SIZE_BYTES) {
+                Logger.logError(LOG_TAG, "Released " + name + " is too small (" + tmpFile.length() + " bytes), keeping old file if any");
+                //noinspection ResultOfMethodCallIgnored
+                tmpFile.delete();
+                return false;
+            }
+
+            if (destFile.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                destFile.delete();
+            }
+            if (!tmpFile.renameTo(destFile)) {
+                Logger.logError(LOG_TAG, "Failed to move " + tmpFile.getAbsolutePath() + " to " + destFile.getAbsolutePath());
+                //noinspection ResultOfMethodCallIgnored
+                tmpFile.delete();
+                return false;
+            }
+
             destFile.setExecutable(true, false);
+            Logger.logInfo(LOG_TAG, "Released " + name + " (" + destFile.length() + " bytes) to " + destFile.getAbsolutePath());
             return true;
         } catch (Exception e) {
-            Logger.logError(LOG_TAG, "Failed to extract asset " + assetPath + ": " + e.getMessage());
+            Logger.logError(LOG_TAG, "Failed to release asset bin/" + name + ": " + e.getMessage());
+            //noinspection ResultOfMethodCallIgnored
+            tmpFile.delete();
             return false;
+        } finally {
+            if (is != null) {
+                try { is.close(); } catch (Exception ignored) {}
+            }
         }
     }
 
@@ -1165,7 +1229,7 @@ public class OpenAiTunnelManager {
                 killStaleTunnelProcesses(context);
 
                 if (!ensureBinariesInstalled(context)) {
-                    updateState(TunnelState.ERROR, "无法释放 tunnel-client 二进制可执行文件");
+                    updateState(TunnelState.ERROR, "无法释放 tunnel-client 二进制可执行文件，请查看应用日志与 ~/tunnel.log");
                     return;
                 }
 
