@@ -137,6 +137,12 @@
                     android:padding="8dp"
                     android:orientation="horizontal">
 
+                    <!--
+                     Outlined button: text + stroke must follow the drawer tint attribute,
+                     otherwise Material defaults to colorPrimary (black) which is invisible
+                     in dark mode. termuxActivityDrawerImageTint is black in day and white
+                     in night, giving correct contrast in both modes.
+                    -->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/toggle_keyboard_button"
                         style="@style/Widget.MaterialComponents.Button.OutlinedButton"
@@ -144,8 +150,16 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:layout_marginEnd="4dp"
-                        android:text="@string/action_toggle_soft_keyboard" />
+                        android:text="@string/action_toggle_soft_keyboard"
+                        android:textColor="?attr/termuxActivityDrawerImageTint"
+                        app:strokeColor="?attr/termuxActivityDrawerImageTint"
+                        app:rippleColor="?attr/termuxActivityDrawerImageTint" />
 
+                    <!--
+                     Filled button: background uses the drawer tint (black in day / white in
+                     night) and text uses the drawer background (white in day / black in
+                     night), so the label stays readable in both modes.
+                    -->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/new_session_button"
                         style="@style/Widget.MaterialComponents.Button"
@@ -153,7 +167,10 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:layout_marginStart="4dp"
-                        android:text="@string/action_new_session" />
+                        android:text="@string/action_new_session"
+                        app:backgroundTint="?attr/termuxActivityDrawerImageTint"
+                        android:textColor="?attr/termuxActivityDrawerBackground"
+                        app:rippleColor="?attr/termuxActivityDrawerBackground" />
                 </LinearLayout>
             </LinearLayout>
 
